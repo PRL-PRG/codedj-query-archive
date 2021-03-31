@@ -25,10 +25,10 @@ Then, generate the harness:
 cargo djanco
 ``` 
 
-Now you can execute the query with:
+This generates s source file `src/bin/djanco.rs`, which you can run to execute all your queries:
 
 ```bash
-cargo --bin djanco --release -- --dataset-path DATASET_LIVES_HERE --output-path WRITE_RESULTS_HERE 
+cargo run --bin djanco --release -- --dataset-path DATASET_LIVES_HERE --output-path WRITE_RESULTS_HERE 
 ```
 
 # Template
@@ -47,6 +47,9 @@ Then, use the `generate` command in cargo to create a new crate from the
 template:
 
 ```bash
-cargo generate --git https://github.com/PRL-PRG/djanco-query-template --name my_query_crate
+cargo generate --git https://github.com/PRL-PRG/djanco-query-template --name my-query-crate
 ```
+
+Then you can add your query functions. There's an example function in 
+`src/lib.rs` to get you started.
 
