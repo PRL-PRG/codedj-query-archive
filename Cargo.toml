@@ -1,7 +1,7 @@
 [package]
-name = "{{project-name}}"
+name = "codedj-examples-ecoop-2021"
 version = "0.1.0"
-authors = ["{{authors}}"]
+authors = ["Konrad Siek <konrad.siek@gmail.com>"]
 edition = "2018"
 license = "MIT"
 
