@@ -1,8 +1,10 @@
-# {{project-name}}
+# Djanco dataset summary query
 
 A crate containing ![Djanco](https://github.com/PRL-PRG/djanco) queries.
 
-This crate... *TODO*
+This crate gathers basic information about projects in a given Parasite dataset. 
+
+This is meant to be run periodically to collect basic stats about the repository over time.
 
 ## Djanco
 
@@ -33,7 +35,7 @@ cargo run --bin djanco --release -- --dataset-path DATASET_LIVES_HERE --output-p
 
 # Template
 
-The template file for the {{project-name}} crate comes from 
+The template file for the djanco-summary crate comes from 
 ![here](https://github.com/PRL-PRG/djanco-query-template). 
 
 To create a new crate from the template, first install 
