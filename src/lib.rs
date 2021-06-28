@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use djanco::*;
-use djanco::data::*;
+use djanco::database::*;
 use djanco::log::*;
 use djanco::csv::*;
 
