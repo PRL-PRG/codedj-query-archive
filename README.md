@@ -1,8 +1,8 @@
-# {{project-name}}
+# djanco-python2
 
 A crate containing ![Djanco](https://github.com/PRL-PRG/djanco) queries.
 
-This crate... *TODO*
+This crate contains queries gathering contents of Python 2 files. It finds commits older than December 2008 (date of introduction of Python 3) and retrieves the contents of changed Python files (identified by extension). There are also auxiliary queries gathering general information about Python projects in the queried dataset.
 
 ## Djanco
 
@@ -33,7 +33,7 @@ cargo run --bin djanco --release -- --dataset-path DATASET_LIVES_HERE --output-p
 
 # Template
 
-The template file for the {{project-name}} crate comes from 
+The template file for the python-2 crate comes from 
 ![here](https://github.com/PRL-PRG/djanco-query-template). 
 
 To create a new crate from the template, first install 
