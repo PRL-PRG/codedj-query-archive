@@ -34,8 +34,6 @@ pub fn main() {
     }
 
     let database = prepare_database!(1622505600 /* = June 2021*/, stores!(Python));
-    execute_query!(database, djanco_python2::all_python_projects);
-    execute_query!(database, djanco_python2::all_projects_containing_python);
     execute_query!(database, djanco_python2::python_snapshots_before_dec2008);
 
 

@@ -15,7 +15,7 @@ use djanco::objects::*;
 
 use djanco_ext::*;
 
-#[djanco(June, 2021, subsets(Python))]
+//#[djanco(June, 2021, subsets(Python))]
 pub fn all_python_projects(database: &Database, _log: &Log, output: &Path) -> Result<(), std::io::Error>  {
     database.projects()
         // Select all projects which are have Python declared as their major language in GitHub.
@@ -24,7 +24,7 @@ pub fn all_python_projects(database: &Database, _log: &Log, output: &Path) -> Re
         .into_csv_in_dir(output, "all_python_projects.csv")
 }
 
-#[djanco(June, 2021, subsets(Python))]
+//#[djanco(June, 2021, subsets(Python))]
 pub fn all_projects_containing_python(database: &Database, _log: &Log, output: &Path) -> Result<(), std::io::Error>  {
     database.projects()
         // Select all projects which have Python as one of their constituent languages in GitHub: there's at least one
