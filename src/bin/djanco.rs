@@ -33,8 +33,13 @@ pub fn main() {
         }
     }
 
-    let database = prepare_database!(1622505600 /* = June 2021*/, stores!(Python));
-    execute_query!(database, djanco_python2::python_snapshots_before_dec2008);
+    let database = prepare_database!(1627776000 /* = August 2021*/, stores!(Python));
+    execute_query!(database, djanco_python2::python_path_map_python);
+    execute_query!(database, djanco_python2::python_snapshots_python);
+
+    let database = prepare_database!(1627776000 /* = August 2021*/, stores!(SmallProjects));
+    execute_query!(database, djanco_python2::python_path_map_small_projects);
+    execute_query!(database, djanco_python2::python_snapshots_small_projects);
 
 
     if options.repository.is_some() && !options.do_not_archive_results {
