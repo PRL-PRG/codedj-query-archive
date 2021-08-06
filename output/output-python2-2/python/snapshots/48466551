@@ -1,0 +1,589 @@
+#!/usr/bin/env python
+
+from ctypes import *
+import os
+import Image as PILImage
+
+lib = cdll.LoadLibrary("./libpyv4l2.so")
+lib.Error.restype = c_char_p
+
+# *********************************************************************
+def ListFlags(value, flags):
+	return [k for k, v in flags.iteritems() if value & v]
+
+# *********************************************************************
+class Capabilities(Structure):
+	_fields_	=	[
+		('driver',				c_char * 16),
+		('card',					c_char * 32),
+		('businfo',				c_char * 32),
+		('version',				c_uint),
+		('capabilities',	c_uint),
+		('reserved',			c_uint * 4),
+	]
+
+# *********************************************************************
+class Input(Structure):
+	_fields_	=	[
+		('index',					c_uint),
+		('name',					c_char * 32),
+		('type',					c_uint),
+		('audioset',			c_uint),
+		('tuner',					c_uint),
+		('std',						c_ulonglong),
+		('status',				c_uint),
+		('reserved',			c_uint * 4),
+	]
+	
+# *********************************************************************
+class PixFormat(Structure):
+	_fields_	=	[
+		('type',					c_ulonglong),
+		('width',					c_uint),
+		('height',				c_uint),
+		('pixelformat',		c_char * 4),
+		('field',					c_uint),
+		('bytesperline',	c_uint),
+		('sizeimage',			c_uint),
+		('colorspace',		c_uint),
+		('priv',					c_uint),
+	]
+	
+# *********************************************************************
+class RequestBuffers(Structure):
+	_fields_	=	[
+		('count',					c_uint),
+		('type',					c_uint),
+		('memory',				c_uint),
+		('reserved',			c_uint * 2),
+	]
+	
+# *********************************************************************
+class TimeCode(Structure):
+	_fields_	=	[
+		('type',					c_uint),
+		('flags',					c_uint),
+		('frames',				c_ubyte),
+		('seconds',				c_ubyte),
+		('minutes',				c_ubyte),
+		('hours',					c_ubyte),
+		('userbits',			c_ubyte * 4),
+	]
+	
+# *********************************************************************
+class Buffer(Structure):
+	_fields_	=	[
+		('index',					c_uint),
+		('type',					c_uint),
+		('bytesused',			c_uint),
+		('flags',					c_uint),
+		('field',					c_uint),
+		('seconds',				c_uint),
+		('nanoseconds',		c_uint),
+		('timecode',			TimeCode),
+		('sequence',			c_uint),
+	]
+	
+# *********************************************************************
+class Format(Structure):
+	_fields_	=	[
+		('index',					c_uint),
+		('type',					c_uint),
+		('flags',					c_uint),
+		('description',		c_char * 32),
+		('pixelformat',		c_char * 4),
+		('reserved',			c_uint * 4),
+	]
+	
+# *********************************************************************
+class Device(object):
+	
+	fd						=	0
+	device				=	None
+	driver				=	None
+	card					=	None
+	businfo				=	None
+	numinputs			=	None
+	buffer				=	None
+	format				=	None
+	caps					=	[]
+	
+	capabilities	=	{
+		'Capture'							:	0x01,
+		'Output'							:	0x02,
+		'Overlay'							:	0x04,
+		'VBICapture'					:	0x10,
+		'VBIOutput'						:	0x20,
+		'SlicedVBICapture'		:	0x40,
+		'SlicedVBIOutput'			:	0x80,
+		'RDSCapture'					:	0x100,
+		'VideoOutputOverlay'	:	0x200,
+		'Tuner'								:	0x10000,
+		'Audio'								:	0x20000,
+		'Radio'								:	0x40000,
+		'ReadWrite'						:	0x1000000,
+		'AsyncIO'							:	0x2000000,
+		'Streaming'						:	0x4000000,
+	}
+	
+	standards	=	{
+		'PAL_B'								:	0x01,
+		'PAL_B1'							:	0x02,
+		'PAL_G'								:	0x04,
+		'PAL_H'								:	0x08,
+		'PAL_I'								:	0x10,
+		'PAL_D'								:	0x20,
+		'PAL_D1'							:	0x40,
+		'PAL_K'								:	0x80,
+		'PAL_M'								:	0x100,
+		'PAL_N'								:	0x200,
+		'PAL_Nc'							:	0x400,
+		'PAL_60'							:	0x800,
+		'NTSC_M'							:	0x1000,
+		'NTSC_M_JP'						:	0x2000,
+		'NTSC_443'						:	0x4000,
+		'NTSC_M_KR'						:	0x8000,
+		'SECAM_B'							:	0x10000,
+		'SECAM_D'							:	0x20000,
+		'SECAM_G'							:	0x40000,
+		'SECAM_H'							:	0x80000,
+		'SECAM_K'							:	0x100000,
+		'SECAM_K1'						:	0x200000,
+		'SECAM_L'							:	0x400000,
+		'SECAM_LC'						:	0x800000,
+		'ATSC_8_VSB'					:	0x1000000,
+		'ATSC_16_VSB'					:	0x2000000,
+		'PAL'									:	0xff,
+		'NTSC'								:	0xb000,
+	}
+	
+	statuses	=	{
+		'NoPower'							:	0x01,
+		'NoSignal'						:	0x02,
+		'NoColor'							:	0x04,
+		'NoHLock'							:	0x100,
+		'ColorKill'						:	0x200,
+		'NoSync'							:	0x10000,
+		'NoEQU'								:	0x20000,
+		'NoCarrier'						:	0x40000,
+		'Macrovision'					:	0x1000000,
+		'NoAccess'						:	0x2000000,
+		'NoVTR'								:	0x4000000,
+	}
+	
+	buftypes	=	{
+		'Capture'							:	0x01,
+		'Output'							:	0x02,
+		'Overlay'							:	0x03,
+		'VBICapture'					:	0x04,
+		'VBIOutput'						:	0x05,
+		'SlicedVBICapture'		:	0x06,
+		'SlicedVBIOutput'			:	0x07,
+		'VideoOutputOverlay'	:	0x08,
+		'Private'							:	0x80,
+	}
+	
+	fields	=	{
+		'Any'							:	0x00,
+		'None'						:	0x01,
+		'Top'							:	0x02,
+		'Bottom'					:	0x03,
+		'Interlaced'			:	0x04,
+		'SeqTB'						:	0x05,
+		'SeqBT'						:	0x06,
+		'Alternate'				:	0x07,
+		'InterlacedTB'		:	0x08,
+		'InterlacedBT'		:	0x09,
+	}
+	
+	pixelformats = (
+		'RGB1',
+		'R444',
+		'RGBO',
+		'RGBP',
+		'RGBQ',
+		'RGBR',
+		'BGR3',
+		'RGB3',
+		'BGR4',
+		'RGB4',
+		'BA81',
+		'BA82',
+		'Y444',
+		'YUVO',
+		'YUVP',
+		'YUV4',
+		'GREY',
+		'Y16 ',
+		'YUYV',
+		'UYVY',
+		'Y41P',
+		'YV12',
+		'YU12',
+		'YVU9',
+		'YUV9',
+		'422P',
+		'411P',
+		'NV12',
+		'NV21',
+		'JPEG',
+		'MPEG',
+		'DVSD',
+		'E625',
+		'HI24',
+		'HM12',
+		'MJPG',
+		'PWC1',
+		'PWC2',
+		'S910',
+		'WNVA',
+		'YYUV',
+	)
+	
+	yuvformats = (
+		'Y444',
+		'YUVO',
+		'YUVP',
+		'YUV4',
+		'GREY',
+		'Y16 ',
+		'YUYV',
+		'UYVY',
+		'Y41P',
+		'YV12',
+		'YU12',
+		'YVU9',
+		'YUV9',
+		'422P',
+		'411P',
+	)
+	
+	resolutions = (
+		(320,	240),
+		(320,	480),
+		(320,	576),
+		(352,	240),
+		(384,	288),
+		(384,	576),
+		(480,	480),
+		(480,	576),
+		(512,	480),
+		(512,	576),
+		(640,	480),
+		(640,	576),
+		(720,	480),
+		(768,	576),
+	)
+	
+	# -------------------------------------------------------------------
+	def __init__(self, dev):
+		if dev:
+			self.Open(dev)
+	
+	# -------------------------------------------------------------------
+	@classmethod
+	def List(self):
+		"""Returns the full path of all available video devices."""
+		files = os.listdir('/dev')
+		ls = []		
+		
+		for f in files:
+			if 'video' in f:
+				if f != 'video':
+					ls.append( '/dev/' + f)
+		
+		return ls
+		
+	# -------------------------------------------------------------------
+	def Open(self, dev):
+		if self.fd:
+			self.Close(fd)
+		
+		self.fd = lib.Open(dev)
+		
+		if self.fd == -1:
+			self.fd = 0
+			raise Exception('Could not open video device %s:\t%i: %s' % 
+				(dev, lib.Errno(), lib.Error())
+			)
+		
+		self.device	=	dev
+		
+	# -------------------------------------------------------------------
+	def Close(self):
+		if self.fd:
+			lib.Close(fd)
+		
+	# -------------------------------------------------------------------
+	def QueryCaps(self):
+		"""Queries the driver for what this card is capable of.
+		
+		After this function completes, the driver, card, businfo,
+		and caps properties will be filled."""
+		s = Capabilities()
+		
+		if lib.QueryCaps(self.fd, byref(s)) == -1:
+			raise Exception('Could not query capabilities:\t%i: %s' % 
+				(lib.Errno(), lib.Error())
+			)		
+		
+		self.driver		= s.driver
+		self.card			=	s.card
+		self.businfo	=	s.businfo
+		self.caps			=	ListFlags(s.capabilities, self.capabilities)		
+		
+	# -------------------------------------------------------------------
+	def EnumInput(self, input):
+		"""Returns information concerning the given input in a list
+		containing [name, type, audioset, tuner, standard, status]
+		"""
+		s = Input()
+		s.index = input
+		
+		if lib.EnumInput(self.fd, byref(s)) == -1:
+			raise Exception('Could not enumerate input %i:\t%i: %s' % 
+				(input, lib.Errno(), lib.Error())
+			)		
+			
+		if input > self.numinputs:
+			self.numinputs = input
+		
+		ls = []
+		
+		ls.append(s.name)
+		
+		if s.type == 1:
+			ls.append('tuner')
+		else:
+			ls.append('camera')
+		
+		ls.append(s.audioset)
+		ls.append(s.tuner)
+		ls.append( ListFlags(s.std, self.standards) )
+		ls.append( ListFlags(s.status, self.statuses) )
+		
+		return ls
+			
+	# -------------------------------------------------------------------
+	def EnumFormats(self, type):
+		"""Returns information about the available formats for 
+		the current input.
+		
+		The formats are returned in a list of tuples containing
+		(fourcc, description)
+		
+		type can be any of the following defined in Device.buftypes:
+			Capture
+			Output
+			Overlay
+			Private
+		"""
+		s = Format()
+		i = 0
+		ls = []
+		
+		s.type = type
+		
+		while True:
+			s.index = i
+			if lib.EnumFormat(self.fd, byref(s)) == -1:
+				break
+			ls.append( (s.pixelformat, s.description) )
+			i += 1
+		
+		return ls
+			
+	# -------------------------------------------------------------------
+	def SetInput(self, input):
+		"""Sets the device to the given input.
+		"""
+		if lib.SetInput(self.fd, input) == -1:
+			raise Exception('Could not set input %i:\t%i: %s' % 
+				(input, lib.Errno(), lib.Error())
+			)		
+			
+	# -------------------------------------------------------------------
+	def SetStandard(self, standard):
+		"""Sets the device to the given standard.
+		"""
+		if lib.SetStandard(self.fd, standard) == -1:
+			raise Exception('Could not set standard %i:\t%i: %s' % 
+				(FindKey(self.standards, std, 'Unknown'), 
+					lib.Errno(), 
+					lib.Error()
+				)
+			)		
+			
+	# -------------------------------------------------------------------
+	def SetField(self, field):
+		"""Sets the device to the given standard.
+		"""
+		self.GetFormat()
+		self.format.field = field
+		self.SetFormat()
+			
+	# -------------------------------------------------------------------
+	def GetFormat(self):
+		"""Sets the device to the given standard.
+		"""
+		if not self.format:
+			self.format = PixFormat()
+			self.format.type = self.buftypes['Capture']
+		
+		if lib.GetFormat(self.fd, byref(self.format)) == -1:
+			raise Exception('Could not get format:\t%i: %s' % 
+				(lib.Errno(), 
+					lib.Error()
+				)
+			)		
+		
+	# -------------------------------------------------------------------
+	def SetFormat(self):
+		"""Sets the device to the given standard.
+		"""
+		if lib.SetFormat(self.fd, byref(self.format)) == -1:
+			raise Exception('Could not set format:\t%i: %s' % 
+				(lib.Errno(), 
+					lib.Error()
+				)
+			)		
+			
+	# -------------------------------------------------------------------
+	def GetPixelFormats(self):
+		"""Sets the device to the given standard.
+		"""
+		
+		self.GetFormat()
+		
+		ls = []
+		
+		for v in self.pixelformats:
+			try:
+				self.format.pixelformat = v
+				self.SetFormat()
+				ls.append(v)
+			except Exception, e:
+				pass
+		
+		return ls
+		
+	# -------------------------------------------------------------------
+	def SetPixelFormat(self, format):
+		self.GetFormat()
+		self.format.pixelformat = format
+		self.SetFormat()
+		
+	# -------------------------------------------------------------------
+	def GetResolutions(self):
+		"""Sets the device to the given standard.
+		"""
+		
+		self.GetFormat()
+		ls = []
+		
+		for v in self.resolutions:
+			try:
+				self.format.width = v[0]
+				self.format.height = v[1]
+				self.SetFormat()
+				ls.append( (self.format.width, self.format.height) )
+			except Exception, e:
+				pass
+		
+		return ls
+		
+	# -------------------------------------------------------------------
+	def SetResolution(self, w, h):
+		"""Sets the device to the given standard.
+		"""
+		
+		self.GetFormat()
+		self.format.width = w
+		self.format.height = h		
+		self.SetFormat()
+		
+	# -------------------------------------------------------------------
+	def __del__(self):
+		if lib:
+			lib.Close(self.fd)
+			
+	# -------------------------------------------------------------------
+	def AddBuffer(self):
+		"""Adds an additional buffer to the queue.
+		"""
+		self.GetFormat()
+		self.buffer = create_string_buffer(self.format.sizeimage)
+		
+	# -------------------------------------------------------------------
+	def Read(self):
+		if self.buffer:
+			lib.read(self.fd, self.buffer, self.format.sizeimage)
+		
+	# -------------------------------------------------------------------
+	def SaveJPEG(self, filename, q = 70):
+		"""Saves the current buffer to filename as a JPEG image.
+		"""
+		p = self.format.pixelformat
+		
+		if p == 'RGB4':
+			p = 'RGBA'
+		elif p == 'BGR3':
+			p = 'BGR'
+		elif p == 'RGB3':
+			p = 'RGB'
+		
+		img = PILImage.frombuffer('RGB', 
+			(self.format.width, self.format.height),
+			self.buffer,
+			'raw',
+			p,
+			0,
+			1)
+		img.save(filename, 'jpeg', quality = q)
+
+if __name__ == '__main__':
+	ls = Device.List()
+	print 'Available devices: '
+	
+	for i in ls:
+		print '\t', i
+	
+	d = Device(ls[0])
+	d.QueryCaps()
+	
+	print 'Capabilities:\t'
+	
+	for i in d.caps:
+		print '\t', i	
+	
+	try:
+		for i in range(0, 32):
+			r = d.EnumInput(i)
+			print """Input %i:
+\tName:\t%s
+\tType:\t%s
+\tStandards: %s""" % (i,
+				r[0],
+				r[1],
+				r[4],
+				)
+	except Exception, e:
+		pass
+	
+	d.SetInput(0)
+	d.SetStandard(d.standards['NTSC'])
+	
+	
+	print 'Pixel formats: '
+
+	for i in d.EnumFormats(d.buftypes['Capture']):
+		print '\t%s\t%s' % i	
+	
+	print 'Resolutions: '
+	
+	for i in d.GetResolutions():
+		print '\t', i
+		
+	d.SetPixelFormat('RGB4')
+	d.SetResolution(640, 480)
+	

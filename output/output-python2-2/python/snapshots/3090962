@@ -1,0 +1,388 @@
+"""Unit tests for the bytes type."""
+
+import os
+import re
+import sys
+import tempfile
+import unittest
+import test.test_support
+
+
+class BytesTest(unittest.TestCase):
+
+    def test_basics(self):
+        b = bytes()
+        self.assertEqual(type(b), bytes)
+        self.assertEqual(b.__class__, bytes)
+
+    def test_empty_sequence(self):
+        b = bytes()
+        self.assertEqual(len(b), 0)
+        self.assertRaises(IndexError, lambda: b[0])
+        self.assertRaises(IndexError, lambda: b[1])
+        self.assertRaises(IndexError, lambda: b[sys.maxint])
+        self.assertRaises(IndexError, lambda: b[sys.maxint+1])
+        self.assertRaises(IndexError, lambda: b[10**100])
+        self.assertRaises(IndexError, lambda: b[-1])
+        self.assertRaises(IndexError, lambda: b[-2])
+        self.assertRaises(IndexError, lambda: b[-sys.maxint])
+        self.assertRaises(IndexError, lambda: b[-sys.maxint-1])
+        self.assertRaises(IndexError, lambda: b[-sys.maxint-2])
+        self.assertRaises(IndexError, lambda: b[-10**100])
+
+    def test_from_list(self):
+        ints = list(range(256))
+        b = bytes(i for i in ints)
+        self.assertEqual(len(b), 256)
+        self.assertEqual(list(b), ints)
+
+    def test_from_index(self):
+        class C:
+            def __init__(self, i=0):
+                self.i = i
+            def __index__(self):
+                return self.i
+        b = bytes([C(), C(1), C(254), C(255)])
+        self.assertEqual(list(b), [0, 1, 254, 255])
+        self.assertRaises(ValueError, bytes, [C(-1)])
+        self.assertRaises(ValueError, bytes, [C(256)])
+
+    def test_constructor_type_errors(self):
+        self.assertRaises(TypeError, bytes, 0.0)
+        class C:
+            pass
+        self.assertRaises(TypeError, bytes, ["0"])
+        self.assertRaises(TypeError, bytes, [0.0])
+        self.assertRaises(TypeError, bytes, [None])
+        self.assertRaises(TypeError, bytes, [C()])
+
+    def test_constructor_value_errors(self):
+        self.assertRaises(ValueError, bytes, [-1])
+        self.assertRaises(ValueError, bytes, [-sys.maxint])
+        self.assertRaises(ValueError, bytes, [-sys.maxint-1])
+        self.assertRaises(ValueError, bytes, [-sys.maxint-2])
+        self.assertRaises(ValueError, bytes, [-10**100])
+        self.assertRaises(ValueError, bytes, [256])
+        self.assertRaises(ValueError, bytes, [257])
+        self.assertRaises(ValueError, bytes, [sys.maxint])
+        self.assertRaises(ValueError, bytes, [sys.maxint+1])
+        self.assertRaises(ValueError, bytes, [10**100])
+
+    def test_repr(self):
+        self.assertEqual(repr(bytes()), "bytes()")
+        self.assertEqual(repr(bytes([0])), "bytes([0x00])")
+        self.assertEqual(repr(bytes([0, 1, 254, 255])), "bytes([0x00, 0x01, 0xfe, 0xff])")
+
+    def test_compare(self):
+        b1 = bytes([1, 2, 3])
+        b2 = bytes([1, 2, 3])
+        b3 = bytes([1, 3])
+
+        self.failUnless(b1 == b2)
+        self.failUnless(b2 != b3)
+        self.failUnless(b1 <= b2)
+        self.failUnless(b1 <= b3)
+        self.failUnless(b1 <  b3)
+        self.failUnless(b1 >= b2)
+        self.failUnless(b3 >= b2)
+        self.failUnless(b3 >  b2)
+
+        self.failIf(b1 != b2)
+        self.failIf(b2 == b3)
+        self.failIf(b1 >  b2)
+        self.failIf(b1 >  b3)
+        self.failIf(b1 >= b3)
+        self.failIf(b1 <  b2)
+        self.failIf(b3 <  b2)
+        self.failIf(b3 <= b2)
+
+    def test_nohash(self):
+        self.assertRaises(TypeError, hash, bytes())
+
+    def test_doc(self):
+        self.failUnless(bytes.__doc__ != None)
+        self.failUnless(bytes.__doc__.startswith("bytes("))
+
+    def test_buffer_api(self):
+        short_sample = "Hello world\n"
+        sample = short_sample + "x"*(20 - len(short_sample))
+        tfn = tempfile.mktemp()
+        try:
+            # Prepare
+            with open(tfn, "wb") as f:
+                f.write(short_sample)
+            # Test readinto
+            with open(tfn, "rb") as f:
+                b = bytes([ord('x')]*20)
+                n = f.readinto(b)
+            self.assertEqual(n, len(short_sample))
+            self.assertEqual(list(b), map(ord, sample))
+            # Test writing in binary mode
+            with open(tfn, "wb") as f:
+                f.write(b)
+            with open(tfn, "rb") as f:
+                self.assertEqual(f.read(), sample)
+            # Test writing in text mode
+            with open(tfn, "w") as f:
+                f.write(b)
+            with open(tfn, "r") as f:
+                self.assertEqual(f.read(), sample)
+            # Can't use readinto in text mode
+            with open(tfn, "r") as f:
+                self.assertRaises(TypeError, f.readinto, b)
+        finally:
+            try:
+                os.remove(tfn)
+            except os.error:
+                pass
+
+    def test_reversed(self):
+        input = map(ord, "Hello")
+        b = bytes(input)
+        output = list(reversed(b))
+        input.reverse()
+        self.assertEqual(output, input)
+
+    def test_getslice(self):
+        def by(s):
+            return bytes(map(ord, s))
+        b = by("Hello, world")
+
+        self.assertEqual(b[:5], by("Hello"))
+        self.assertEqual(b[1:5], by("ello"))
+        self.assertEqual(b[5:7], by(", "))
+        self.assertEqual(b[7:], by("world"))
+        self.assertEqual(b[7:12], by("world"))
+        self.assertEqual(b[7:100], by("world"))
+
+        self.assertEqual(b[:-7], by("Hello"))
+        self.assertEqual(b[-11:-7], by("ello"))
+        self.assertEqual(b[-7:-5], by(", "))
+        self.assertEqual(b[-5:], by("world"))
+        self.assertEqual(b[-5:12], by("world"))
+        self.assertEqual(b[-5:100], by("world"))
+        self.assertEqual(b[-100:5], by("Hello"))
+
+    def test_regexps(self):
+        def by(s):
+            return bytes(map(ord, s))
+        b = by("Hello, world")
+        self.assertEqual(re.findall(r"\w+", b), [by("Hello"), by("world")])
+
+    def test_setitem(self):
+        b = bytes([1, 2, 3])
+        b[1] = 100
+        self.assertEqual(b, bytes([1, 100, 3]))
+        b[-1] = 200
+        self.assertEqual(b, bytes([1, 100, 200]))
+        class C:
+            def __init__(self, i=0):
+                self.i = i
+            def __index__(self):
+                return self.i
+        b[0] = C(10)
+        self.assertEqual(b, bytes([10, 100, 200]))
+        try:
+            b[3] = 0
+            self.fail("Didn't raise IndexError")
+        except IndexError:
+            pass
+        try:
+            b[-10] = 0
+            self.fail("Didn't raise IndexError")
+        except IndexError:
+            pass
+        try:
+            b[0] = 256
+            self.fail("Didn't raise ValueError")
+        except ValueError:
+            pass
+        try:
+            b[0] = C(-1)
+            self.fail("Didn't raise ValueError")
+        except ValueError:
+            pass
+        try:
+            b[0] = None
+            self.fail("Didn't raise TypeError")
+        except TypeError:
+            pass
+
+    def test_delitem(self):
+        b = bytes(range(10))
+        del b[0]
+        self.assertEqual(b, bytes(range(1, 10)))
+        del b[-1]
+        self.assertEqual(b, bytes(range(1, 9)))
+        del b[4]
+        self.assertEqual(b, bytes([1, 2, 3, 4, 6, 7, 8]))
+
+    def test_setslice(self):
+        b = bytes(range(10))
+        self.assertEqual(list(b), list(range(10)))
+
+        b[0:5] = bytes([1, 1, 1, 1, 1])
+        self.assertEqual(b, bytes([1, 1, 1, 1, 1, 5, 6, 7, 8, 9]))
+
+        del b[0:-5]
+        self.assertEqual(b, bytes([5, 6, 7, 8, 9]))
+
+        b[0:0] = bytes([0, 1, 2, 3, 4])
+        self.assertEqual(b, bytes(range(10)))
+
+        b[-7:-3] = bytes([100, 101])
+        self.assertEqual(b, bytes([0, 1, 2, 100, 101, 7, 8, 9]))
+
+        b[3:5] = [3, 4, 5, 6]
+        self.assertEqual(b, bytes(range(10)))
+
+    def test_setslice_trap(self):
+        # This test verifies that we correctly handle assigning self
+        # to a slice of self (the old Lambert Meertens trap).
+        b = bytes(range(256))
+        b[8:] = b
+        self.assertEqual(b, bytes(list(range(8)) + list(range(256))))
+
+    def test_encoding(self):
+        sample = u"Hello world\n\u1234\u5678\u9abc\udef0"
+        for enc in ("utf8", "utf16"):
+            b = bytes(sample, enc)
+            self.assertEqual(b, bytes(map(ord, sample.encode(enc))))
+        self.assertRaises(UnicodeEncodeError, bytes, sample, "latin1")
+        b = bytes(sample, "latin1", "ignore")
+        self.assertEqual(b, bytes(sample[:-4]))
+
+    def test_decode(self):
+        sample = u"Hello world\n\u1234\u5678\u9abc\def0\def0"
+        for enc in ("utf8", "utf16"):
+            b = bytes(sample, enc)
+            self.assertEqual(b.decode(enc), sample)
+        sample = u"Hello world\n\x80\x81\xfe\xff"
+        b = bytes(sample, "latin1")
+        self.assertRaises(UnicodeDecodeError, b.decode, "utf8")
+        self.assertEqual(b.decode("utf8", "ignore"), "Hello world\n")
+
+    def test_from_buffer(self):
+        sample = "Hello world\n\x80\x81\xfe\xff"
+        buf = buffer(sample)
+        b = bytes(buf)
+        self.assertEqual(b, bytes(map(ord, sample)))
+
+    def test_to_str(self):
+        sample = "Hello world\n\x80\x81\xfe\xff"
+        b = bytes(sample)
+        self.assertEqual(str(b), sample)
+
+    def test_from_int(self):
+        b = bytes(0)
+        self.assertEqual(b, bytes())
+        b = bytes(10)
+        self.assertEqual(b, bytes([0]*10))
+        b = bytes(10000)
+        self.assertEqual(b, bytes([0]*10000))
+
+    def test_concat(self):
+        b1 = bytes("abc")
+        b2 = bytes("def")
+        self.assertEqual(b1 + b2, bytes("abcdef"))
+        self.assertRaises(TypeError, lambda: b1 + "def")
+        self.assertRaises(TypeError, lambda: "abc" + b2)
+
+    def test_repeat(self):
+        b = bytes("abc")
+        self.assertEqual(b * 3, bytes("abcabcabc"))
+        self.assertEqual(b * 0, bytes())
+        self.assertEqual(b * -1, bytes())
+        self.assertRaises(TypeError, lambda: b * 3.14)
+        self.assertRaises(TypeError, lambda: 3.14 * b)
+        self.assertRaises(MemoryError, lambda: b * sys.maxint)
+
+    def test_repeat_1char(self):
+        self.assertEqual(bytes('x')*100, bytes('x'*100))
+
+    def test_iconcat(self):
+        b = bytes("abc")
+        b1 = b
+        b += bytes("def")
+        self.assertEqual(b, bytes("abcdef"))
+        self.assertEqual(b, b1)
+        self.failUnless(b is b1)
+
+    def test_irepeat(self):
+        b = bytes("abc")
+        b1 = b
+        b *= 3
+        self.assertEqual(b, bytes("abcabcabc"))
+        self.assertEqual(b, b1)
+        self.failUnless(b is b1)
+
+    def test_irepeat_1char(self):
+        b = bytes("x")
+        b1 = b
+        b *= 100
+        self.assertEqual(b, bytes("x"*100))
+        self.assertEqual(b, b1)
+        self.failUnless(b is b1)
+
+    def test_contains(self):
+        b = bytes("abc")
+        self.failUnless(ord('a') in b)
+        self.failUnless(long(ord('a')) in b)
+        self.failIf(200 in b)
+        self.failIf(200L in b)
+        self.assertRaises(ValueError, lambda: 300 in b)
+        self.assertRaises(ValueError, lambda: -1 in b)
+        self.assertRaises(TypeError, lambda: None in b)
+        self.assertRaises(TypeError, lambda: float(ord('a')) in b)
+        self.assertRaises(TypeError, lambda: "a" in b)
+        self.failUnless(bytes("") in b)
+        self.failUnless(bytes("a") in b)
+        self.failUnless(bytes("b") in b)
+        self.failUnless(bytes("c") in b)
+        self.failUnless(bytes("ab") in b)
+        self.failUnless(bytes("bc") in b)
+        self.failUnless(bytes("abc") in b)
+        self.failIf(bytes("ac") in b)
+        self.failIf(bytes("d") in b)
+        self.failIf(bytes("dab") in b)
+        self.failIf(bytes("abd") in b)
+
+    # Optimizations:
+    # __iter__? (optimization)
+    # __reversed__? (optimization)
+
+    # XXX Some list methods?
+    # extended slicing
+    # extended slice assignment
+    # extend (same as b[len(b):] = src)
+    # reverse (in-place)
+    # remove
+    # pop
+    # NOT sort!
+    # With int arg:
+    # index
+    # count
+    # append
+    # insert
+
+    # XXX Some string methods?  (Those that don't use character properties)
+    # startswith
+    # endswidth
+    # find, rfind
+    # index, rindex (bytes arg)
+    # join
+    # replace
+    # translate
+    # split, rsplit
+    # lstrip, rstrip, strip??
+
+    # XXX pickle and marshal support?
+
+
+def test_main():
+    test.test_support.run_unittest(BytesTest)
+
+
+if __name__ == "__main__":
+    test_main()
+    ##unittest.main()

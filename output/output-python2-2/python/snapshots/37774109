@@ -1,0 +1,2 @@
+class CfrmMain:
+	pass

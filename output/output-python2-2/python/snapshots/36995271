@@ -1,0 +1,1 @@
+../casp7/python/blast2align.py

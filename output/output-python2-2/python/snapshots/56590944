@@ -1,0 +1,43 @@
+import os
+
+from sugar import profile
+from sugar import util
+from sugar.activity import activity
+import shutil
+
+from color import Color
+import record
+
+class Instance:
+	key = profile.get_pubkey()
+	keyHash = util._sha_data(key)
+	keyHashPrintable = util.printable_hash(keyHash)
+	nickName = profile.get_nick_name()
+
+	colorFill = Color()
+	colorFill.init_hex( profile.get_color().get_fill_color() )
+	colorStroke = Color()
+	colorStroke.init_hex( profile.get_color().get_stroke_color() )
+
+	instanceId = None
+	tmpPath = None
+	dataPath = None
+
+	def __init__(self, ca):
+		self.__class__.instanceId = ca._activity_id
+
+		self.__class__.tmpPath = os.path.join(ca.get_activity_root(), "tmp")
+		recreateTmp()
+
+		self.__class__.dataPath = os.path.join(ca.get_activity_root(), "data")
+		recreateInstance()
+
+
+def recreateTmp():
+	if (not os.path.exists(Instance.tmpPath)):
+		os.makedirs(Instance.tmpPath)
+
+
+def recreateData():
+	if (not os.path.exists(Instance.dataPath)):
+		os.makedirs(Instance.dataPath)

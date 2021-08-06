@@ -1,0 +1,119 @@
+import os
+from django.conf import settings
+from translations.lib.types import (TransManagerMixin, TransManagerError)
+from translations.models import POFile, Language
+
+# I couldn't import this file from a separated dir
+import libpo as po 
+
+class POTStatsError(Exception):
+
+    def __init__(self, language):
+        self.language = language
+
+    def __str__(self):
+        return "Could not calculate the statistics using the '%s' " \
+               "language." % (self.language)
+
+class POTManager(TransManagerMixin):
+    """ A browser class for POT files. """
+
+    def __init__(self, file_set, path, source_lang):
+        self.file_set = file_set
+        self.path = path
+        self.source_lang = source_lang
+
+    def get_file_content(self, filename):
+        if filename in self.file_set:
+            file_path = os.path.join(self.path, filename)
+            filef = file(file_path, 'rb')
+            file_content = filef.read()
+            filef.close()
+            return file_content
+        else:
+            raise IOError("File not found.")
+        
+    def get_po_files(self):
+        """ Return a list of PO filenames """
+
+        po_files = []
+        for filename in self.file_set:
+            if filename.endswith('.po'):
+                po_files.append(filename)
+        po_files.sort()
+        return po_files
+
+    def get_langfile(self, lang):
+        """ Return a PO filename """
+
+        for filename in self.get_po_files():
+            if os.path.basename(filename[:-3:]) == lang:
+                return filename
+
+    def get_langs(self):
+        """ Return all langs tha have a po file for a object """
+
+        langs = []
+        for filename in self.get_po_files():
+            langs.append(os.path.basename(filename[:-3:]))
+        langs.sort()
+        return langs
+
+    def calcule_stats(self, lang):
+        """ 
+        Return the statistics of a specificy language for a 
+        object 
+        """
+        try:
+            file_path = os.path.join(self.path, self.get_langfile(lang))
+            entries = po.read(file_path)
+            return po.stats(entries)
+        except AttributeError:
+            raise POTStatsError, lang
+
+    def create_stats(self, lang, object):
+        """Set the statistics of a specificy language for a object."""
+        try:
+            stats = self.calcule_stats(lang)
+            f = self.get_langfile(lang)
+            s = POFile.objects.get(object_id=object.id, 
+                                        filename=f)
+        except POTStatsError:
+            # TODO: It should probably be raised when a checkout of a 
+            # module has a problem. Needs to decide what to do when it
+            # happens
+            pass
+        except POFile.DoesNotExist:
+            try:
+                l = Language.objects.get(code=lang)
+            except Language.DoesNotExist:
+                l = None
+            s = POFile.objects.create(language=l, filename=f, 
+                                           object=object)
+        s.set_stats(trans=stats['translated'], fuzzy=stats['fuzzy'], 
+                    untrans=stats['untranslated'])
+        return s.save()
+
+    def stats_for_lang_object(self, lang, object):
+        """Return statistics for an object in a specific language."""
+        try: 
+            return POFile.objects.filter(language=lang, 
+                                         object_id=object.id)[0]
+        except IndexError:
+            return None
+
+    def get_stats(self, object):
+        """ Return a list of statistics of languages for an object."""
+        return POFile.objects.filter(
+                   object_id=object.id
+        ).order_by('-trans_perc')
+
+    def delete_stats_for_object(self, object):
+        """ Delete all lang statistics of an object."""
+        POFile.objects.filter(object_id=object.id).delete()
+
+    def get_source_file(self):
+        """Return the source file (pot)"""
+        for filename in self.file_set:
+            if filename.endswith('.pot'):
+                return filename

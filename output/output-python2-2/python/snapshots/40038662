@@ -1,0 +1,1136 @@
+from Screen import Screen
+from Components.ActionMap import ActionMap, HelpableActionMap
+from Components.ActionMap import NumberActionMap
+from Components.Label import *
+from Components.ProgressBar import *
+from Components.config import configfile, configsequencearg
+from Components.config import config, configElement, ConfigSubsection, configSequence
+from ChannelSelection import ChannelSelection, BouquetSelector
+
+from Components.Pixmap import Pixmap, PixmapConditional
+from Components.BlinkingPixmap import BlinkingPixmapConditional
+from Components.ServiceName import ServiceName
+from Components.EventInfo import EventInfo, EventInfoProgress
+
+from ServiceReference import ServiceReference
+from EpgSelection import EPGSelection
+
+from Screens.MessageBox import MessageBox
+from Screens.Dish import Dish
+from Screens.Standby import Standby
+from Screens.EventView import EventViewEPGSelect
+from Screens.MinuteInput import MinuteInput
+from Components.Harddisk import harddiskmanager
+
+from Components.ServiceEventTracker import ServiceEventTracker
+
+from Tools import Notifications
+from Tools.Directories import *
+
+#from enigma import eTimer, eDVBVolumecontrol, quitMainloop
+from enigma import *
+
+import time
+import os
+
+from Components.config import config, currentConfigSelectionElement
+
+# hack alert!
+from Menu import MainMenu, mdom
+
+class InfoBarDish:
+	def __init__(self):
+		self.dishDialog = self.session.instantiateDialog(Dish)
+		self.onShown.append(self.dishDialog.show)
+
+class InfoBarShowHide:
+	""" InfoBar show/hide control, accepts toggleShow and hide actions, might start
+	fancy animations. """
+	STATE_HIDDEN = 0
+	STATE_HIDING = 1
+	STATE_SHOWING = 2
+	STATE_SHOWN = 3
+	
+	def __init__(self):
+		self["ShowHideActions"] = ActionMap( ["InfobarShowHideActions"] ,
+			{
+				"toggleShow": self.toggleShow,
+				"hide": self.hide,
+			})
+
+		self.__state = self.STATE_SHOWN
+		self.__locked = 0
+		
+		self.onExecBegin.append(self.show)
+		
+		self.hideTimer = eTimer()
+		self.hideTimer.timeout.get().append(self.doTimerHide)
+		self.hideTimer.start(5000, True)
+		
+		self.onShow.append(self.__onShow)
+		self.onHide.append(self.__onHide)
+
+	def __onShow(self):
+		self.__state = self.STATE_SHOWN
+		self.startHideTimer()
+	
+	def startHideTimer(self):
+		if self.__state == self.STATE_SHOWN and not self.__locked:
+			self.hideTimer.start(5000, True)
+
+	def __onHide(self):
+		self.__state = self.STATE_HIDDEN
+
+	def doShow(self):
+		self.show()
+		self.startHideTimer()
+
+	def doTimerHide(self):
+		self.hideTimer.stop()
+		if self.__state == self.STATE_SHOWN:
+			self.hide()
+
+	def toggleShow(self):
+		if self.__state == self.STATE_SHOWN:
+			self.hide()
+			self.hideTimer.stop()
+		elif self.__state == self.STATE_HIDDEN:
+			self.show()
+
+	def lockShow(self):
+		self.__locked = self.__locked + 1
+		if self.execing:
+			self.show()
+			self.hideTimer.stop()
+	
+	def unlockShow(self):
+		self.__locked = self.__locked - 1
+		if self.execing:
+			self.startHideTimer()
+
+#	def startShow(self):
+#		self.instance.m_animation.startMoveAnimation(ePoint(0, 600), ePoint(0, 380), 100)
+#		self.__state = self.STATE_SHOWN
+#	
+#	def startHide(self):
+#		self.instance.m_animation.startMoveAnimation(ePoint(0, 380), ePoint(0, 600), 100)
+#		self.__state = self.STATE_HIDDEN
+
+class NumberZap(Screen):
+	def quit(self):
+		self.Timer.stop()
+		self.close(0)
+
+	def keyOK(self):
+		self.Timer.stop()
+		self.close(int(self["number"].getText()))
+
+	def keyNumberGlobal(self, number):
+		self.Timer.start(3000, True)		#reset timer
+		self.field = self.field + str(number)
+		self["number"].setText(self.field)
+		if len(self.field) >= 4:
+			self.keyOK()
+
+	def __init__(self, session, number):
+		Screen.__init__(self, session)
+		self.field = str(number)
+
+		self["channel"] = Label(_("Channel:"))
+
+		self["number"] = Label(self.field)
+
+		self["actions"] = NumberActionMap( [ "SetupActions" ], 
+			{
+				"cancel": self.quit,
+				"ok": self.keyOK,
+				"1": self.keyNumberGlobal,
+				"2": self.keyNumberGlobal,
+				"3": self.keyNumberGlobal,
+				"4": self.keyNumberGlobal,
+				"5": self.keyNumberGlobal,
+				"6": self.keyNumberGlobal,
+				"7": self.keyNumberGlobal,
+				"8": self.keyNumberGlobal,
+				"9": self.keyNumberGlobal,
+				"0": self.keyNumberGlobal
+			})
+
+		self.Timer = eTimer()
+		self.Timer.timeout.get().append(self.keyOK)
+		self.Timer.start(3000, True)
+
+class InfoBarPowerKey:
+	""" PowerKey stuff - handles the powerkey press and powerkey release actions"""
+	
+	def __init__(self):
+		self.powerKeyTimer = eTimer()
+		self.powerKeyTimer.timeout.get().append(self.powertimer)
+		self["PowerKeyActions"] = HelpableActionMap(self, "PowerKeyActions",
+			{
+				"powerdown": self.powerdown,
+				"powerup": self.powerup,
+				"discreteStandby": (self.standby, "Go standby"),
+				"discretePowerOff": (self.quit, "Go to deep standby"),
+			})
+
+	def powertimer(self):	
+		print "PowerOff - Now!"
+		self.quit()
+	
+	def powerdown(self):
+		self.standbyblocked = 0
+		self.powerKeyTimer.start(3000, True)
+
+	def powerup(self):
+		self.powerKeyTimer.stop()
+		if self.standbyblocked == 0:
+			self.standbyblocked = 1
+			self.standby()
+
+	def standby(self):
+		self.session.open(Standby, self)
+
+	def quit(self):
+		# halt
+		quitMainloop(1)
+
+class InfoBarNumberZap:
+	""" Handles an initial number for NumberZapping """
+	def __init__(self):
+		self["NumberActions"] = NumberActionMap( [ "NumberActions"],
+			{
+				"1": self.keyNumberGlobal,
+				"2": self.keyNumberGlobal,
+				"3": self.keyNumberGlobal,
+				"4": self.keyNumberGlobal,
+				"5": self.keyNumberGlobal,
+				"6": self.keyNumberGlobal,
+				"7": self.keyNumberGlobal,
+				"8": self.keyNumberGlobal,
+				"9": self.keyNumberGlobal,
+				"0": self.keyNumberGlobal,
+			})
+
+	def keyNumberGlobal(self, number):
+#		print "You pressed number " + str(number)
+		if number == 0:
+			self.servicelist.recallPrevService()
+			self.doShow()
+		else:
+			self.session.openWithCallback(self.numberEntered, NumberZap, number)
+
+	def numberEntered(self, retval):
+#		print self.servicelist
+		if retval > 0:
+			self.zapToNumber(retval)
+
+	def searchNumberHelper(self, serviceHandler, num, bouquet):
+		servicelist = serviceHandler.list(bouquet)
+		if not servicelist is None:
+			while num:
+				serviceIterator = servicelist.getNext()
+				if not serviceIterator.valid(): #check end of list
+					break
+				if serviceIterator.flags: #assume normal dvb service have no flags set
+					continue
+				num -= 1;
+			if not num: #found service with searched number ?
+				return serviceIterator, 0
+		return None, num
+
+	def zapToNumber(self, number):
+		bouquet = self.servicelist.bouquet_root
+		service = None
+		serviceHandler = eServiceCenter.getInstance()
+		if bouquet.toString().find('FROM BOUQUET "bouquets.') == -1: #FIXME HACK
+			service, number = self.searchNumberHelper(serviceHandler, number, bouquet)
+		else:
+			bouquetlist = serviceHandler.list(bouquet)
+			if not bouquetlist is None:
+				while number:
+					bouquet = self.servicelist.appendDVBTypes(bouquetlist.getNext())
+					if not bouquet.valid(): #check end of list
+						break
+					if (bouquet.flags & eServiceReference.flagDirectory) != eServiceReference.flagDirectory:
+						continue
+					service, number = self.searchNumberHelper(serviceHandler, number, bouquet)
+		if not service is None:
+			if self.servicelist.getRoot() != bouquet: #already in correct bouquet?
+				self.servicelist.clearPath()
+				if self.servicelist.bouquet_root != bouquet:
+					self.servicelist.enterPath(self.servicelist.bouquet_root)
+				self.servicelist.enterPath(bouquet)
+			self.servicelist.setCurrentSelection(service) #select the service in servicelist
+			self.servicelist.zap()
+
+class InfoBarChannelSelection:
+	""" ChannelSelection - handles the channelSelection dialog and the initial 
+	channelChange actions which open the channelSelection dialog """
+	def __init__(self):
+		#instantiate forever
+		self.servicelist = self.session.instantiateDialog(ChannelSelection)
+
+		self["ChannelSelectActions"] = HelpableActionMap(self, "InfobarChannelSelection",
+			{
+				"switchChannelUp": self.switchChannelUp,
+				"switchChannelDown": self.switchChannelDown,
+				"zapUp": (self.zapUp, _("next channel")),
+				"zapDown": (self.zapDown, _("previous channel")),
+			})
+
+	def switchChannelUp(self):
+		self.servicelist.moveUp()
+		self.session.execDialog(self.servicelist)
+
+	def switchChannelDown(self):
+		self.servicelist.moveDown()
+		self.session.execDialog(self.servicelist)
+
+	def zapUp(self):
+		if currentConfigSelectionElement(config.usage.quickzap_bouquet_change) == "yes":
+			if self.servicelist.inBouquet() and self.servicelist.atBegin():
+				self.servicelist.prevBouquet()
+		self.servicelist.moveUp()
+		self.servicelist.zap()
+		self.doShow()
+
+	def zapDown(self):
+		if currentConfigSelectionElement(config.usage.quickzap_bouquet_change) == "yes" and self.servicelist.inBouquet() and self.servicelist.atEnd():
+			self.servicelist.nextBouquet()
+		else:
+			self.servicelist.moveDown()
+		self.servicelist.zap()
+		self.doShow()
+
+class InfoBarMenu:
+	""" Handles a menu action, to open the (main) menu """
+	def __init__(self):
+		self["MenuActions"] = HelpableActionMap(self, "InfobarMenuActions", 
+			{
+				"mainMenu": (self.mainMenu, "Enter main menu..."),
+			})
+
+	def mainMenu(self):
+		print "loading mainmenu XML..."
+		menu = mdom.childNodes[0]
+		assert menu.tagName == "menu", "root element in menu must be 'menu'!"
+		self.session.open(MainMenu, menu, menu.childNodes)
+
+class InfoBarEPG:
+	""" EPG - Opens an EPG list when the showEPGList action fires """
+	def __init__(self):
+		self["EPGActions"] = HelpableActionMap(self, "InfobarEPGActions", 
+			{
+				"showEventInfo": (self.openEventView, _("show EPG...")),
+			})
+
+	def zapToService(self, service):
+		if not service is None:
+			if self.servicelist.getRoot() != self.epg_bouquet: #already in correct bouquet?
+				self.servicelist.clearPath()
+				if self.servicelist.bouquet_root != self.epg_bouquet:
+					self.servicelist.enterPath(self.servicelist.bouquet_root)
+				self.servicelist.enterPath(self.epg_bouquet)
+			self.servicelist.setCurrentSelection(service) #select the service in servicelist
+			self.servicelist.zap()
+
+	def openBouquetEPG(self, bouquet):
+		ptr=eEPGCache.getInstance()
+		services = [ ]
+		servicelist = eServiceCenter.getInstance().list(bouquet)
+		if not servicelist is None:
+			while True:
+				service = servicelist.getNext()
+				if not service.valid(): #check if end of list
+					break
+				if service.flags: #ignore non playable services
+					continue
+				services.append(ServiceReference(service))
+		if len(services):
+			self.epg_bouquet = bouquet
+			self.session.openWithCallback(self.closed, EPGSelection, services, self.zapToService)
+
+	def closed(self, ret):
+		if ret:
+			self.close(ret)
+
+	def openMultiServiceEPG(self):
+		bouquets = self.servicelist.getBouquetList()
+		if bouquets is None:
+			cnt = 0
+		else:
+			cnt = len(bouquets)
+		if cnt > 1: # show bouquet list
+			self.session.openWithCallback(self.closed, BouquetSelector, bouquets, self.openBouquetEPG)
+		elif cnt == 1: 
+			self.openBouquetEPG(bouquets[0][1])
+
+	def openSingleServiceEPG(self):
+		ref=self.session.nav.getCurrentlyPlayingServiceReference()
+		ptr=eEPGCache.getInstance()
+		self.session.openWithCallback(self.closed, EPGSelection, ref)
+
+	def openEventView(self):
+		self.epglist = [ ]
+		service = self.session.nav.getCurrentService()
+		ref = self.session.nav.getCurrentlyPlayingServiceReference()
+		info = service.info()
+		ptr=info.getEvent(0)
+		if ptr:
+			self.epglist.append(ptr)
+		ptr=info.getEvent(1)
+		if ptr:
+			self.epglist.append(ptr)
+		if len(self.epglist) == 0:
+			epg = eEPGCache.getInstance()
+			ptr = epg.lookupEventTime(ref, -1)
+			if ptr:
+				self.epglist.append(ptr)
+				ptr = epg.lookupEventTime(ref, ptr.getBeginTime(), +1)
+				if ptr:
+					self.epglist.append(ptr)
+		if len(self.epglist) > 0:
+			self.session.open(EventViewEPGSelect, self.epglist[0], ServiceReference(ref), self.eventViewCallback, self.openSingleServiceEPG, self.openMultiServiceEPG)
+		else:
+			print "no epg for the service avail.. so we show multiepg instead of eventinfo"
+			self.openMultiServiceEPG()
+
+	def eventViewCallback(self, setEvent, setService, val): #used for now/next displaying
+		if len(self.epglist) > 1:
+			tmp = self.epglist[0]
+			self.epglist[0]=self.epglist[1]
+			self.epglist[1]=tmp
+			setEvent(self.epglist[0])
+
+from math import log
+
+class InfoBarTuner:
+	"""provides a snr/agc/ber display"""
+	def __init__(self):
+		self["snr"] = Label()
+		self["agc"] = Label()
+		self["ber"] = Label()
+		self["snr_percent"] = Label()
+		self["agc_percent"] = Label()
+		self["ber_count"] = Label()
+		self["snr_progress"] = ProgressBar()
+		self["agc_progress"] = ProgressBar()
+		self["ber_progress"] = ProgressBar()
+		self.timer = eTimer()
+		self.timer.timeout.get().append(self.updateTunerInfo)
+		self.timer.start(1000)
+
+	def calc(self,val):
+		if not val:
+			return 0
+		if val < 2500:
+			return (long)(log(val)/log(2))
+		return val*100/65535
+
+	def updateTunerInfo(self):
+		if self.instance.isVisible():
+			service = self.session.nav.getCurrentService()
+			snr=0
+			agc=0
+			ber=0
+			if service is not None:
+				feinfo = service.frontendStatusInfo()
+				if feinfo is not None:
+					ber=feinfo.getFrontendInfo(iFrontendStatusInformation.bitErrorRate)
+					snr=feinfo.getFrontendInfo(iFrontendStatusInformation.signalPower)*100/65536
+					agc=feinfo.getFrontendInfo(iFrontendStatusInformation.signalQuality)*100/65536
+			self["snr_percent"].setText("%d%%"%(snr))
+			self["agc_percent"].setText("%d%%"%(agc))
+			self["ber_count"].setText("%d"%(ber))
+			self["snr_progress"].setValue(snr)
+			self["agc_progress"].setValue(agc)
+			self["ber_progress"].setValue(self.calc(ber))
+
+class InfoBarEvent:
+	"""provides a current/next event info display"""
+	def __init__(self):
+		self["Event_Now_StartTime"] = EventInfo(self.session.nav, EventInfo.Now_StartTime)
+		self["Event_Next_StartTime"] = EventInfo(self.session.nav, EventInfo.Next_StartTime)
+				
+		self["Event_Now"] = EventInfo(self.session.nav, EventInfo.Now)
+		self["Event_Next"] = EventInfo(self.session.nav, EventInfo.Next)
+
+		self["Event_Now_Duration"] = EventInfo(self.session.nav, EventInfo.Now_Duration)
+		self["Event_Next_Duration"] = EventInfo(self.session.nav, EventInfo.Next_Duration)
+
+		self["Now_ProgressBar"] = EventInfoProgress(self.session.nav, EventInfo.Now)
+
+class InfoBarServiceName:
+	def __init__(self):
+		self["ServiceName"] = ServiceName(self.session.nav)
+
+class InfoBarSeek:
+	"""handles actions like seeking, pause"""
+	
+	# ispause, isff, issm
+	SEEK_STATE_PLAY = (0, 0, 0, ">")
+	SEEK_STATE_PAUSE = (1, 0, 0, "||")
+	SEEK_STATE_FF_2X = (0, 2, 0, ">> 2x")
+	SEEK_STATE_FF_4X = (0, 4, 0, ">> 4x")
+	SEEK_STATE_FF_8X = (0, 8, 0, ">> 8x")
+	SEEK_STATE_FF_32X = (0, 32, 0, ">> 32x")
+	SEEK_STATE_FF_64X = (0, 64, 0, ">> 64x")
+	SEEK_STATE_FF_128X = (0, 128, 0, ">> 128x")
+	
+	SEEK_STATE_BACK_4X = (0, -4, 0, "<< 4x")
+	SEEK_STATE_BACK_32X = (0, -32, 0, "<< 32x")
+	SEEK_STATE_BACK_64X = (0, -64, 0, "<< 64x")
+	SEEK_STATE_BACK_128X = (0, -128, 0, "<< 128x")
+	
+	SEEK_STATE_SM_HALF = (0, 0, 2, "/2")
+	SEEK_STATE_SM_QUARTER = (0, 0, 4, "/4")
+	SEEK_STATE_SM_EIGHTH = (0, 0, 8, "/8")
+	
+	def __init__(self):
+		self.__event_tracker = ServiceEventTracker(screen=self, eventmap=
+			{
+				iPlayableService.evSeekableStatusChanged: self.__seekableStatusChanged,
+				iPlayableService.evStart: self.__serviceStarted,
+				
+				iPlayableService.evEOF: self.__evEOF,
+				iPlayableService.evSOF: self.__evSOF,
+			})
+		self["SeekActions"] = HelpableActionMap(self, "InfobarSeekActions", 
+			{
+				"pauseService": (self.pauseService, "pause"),
+				"unPauseService": (self.unPauseService, "continue"),
+				
+				"seekFwd": (self.seekFwd, "skip forward"),
+				"seekFwdUp": (self.seekFwdUp, "skip forward"),
+				"seekBack": (self.seekBack, "skip backward"),
+				"seekBackUp": (self.seekBackUp, "skip backward"),
+			}, prio=-1)
+			# give them a little more priority to win over color buttons
+
+		self.seekstate = self.SEEK_STATE_PLAY
+		self.onClose.append(self.delTimer)
+		
+		self.fwdtimer = False
+		self.fwdKeyTimer = eTimer()
+		self.fwdKeyTimer.timeout.get().append(self.fwdTimerFire)
+
+		self.rwdtimer = False
+		self.rwdKeyTimer = eTimer()
+		self.rwdKeyTimer.timeout.get().append(self.rwdTimerFire)
+		
+		self.onPlayStateChanged = [ ]
+		
+		self.lockedBecauseOfSkipping = False
+	
+	def up(self):
+		pass
+	
+	def down(self):
+		pass
+	
+	def delTimer(self):
+		del self.fwdKeyTimer
+		del self.rwdKeyTimer
+	
+	def getSeek(self):
+		service = self.session.nav.getCurrentService()
+		if service is None:
+			return False
+
+		seek = service.seek()
+
+		if seek is None or not seek.isCurrentlySeekable():
+			return None
+		
+		return seek
+	
+	def isSeekable(self):
+		if self.getSeek() is None:
+			return False
+		return True
+
+	def __seekableStatusChanged(self):
+		print "seekable status changed!"
+		if not self.isSeekable():
+			self["SeekActions"].setEnabled(False)
+			print "not seekable, return to play"
+			self.setSeekState(self.SEEK_STATE_PLAY)
+		else:
+			self["SeekActions"].setEnabled(True)
+			print "seekable"
+
+	def __serviceStarted(self):
+		self.seekstate = self.SEEK_STATE_PLAY
+
+	def setSeekState(self, state):
+		service = self.session.nav.getCurrentService()
+		
+		if service is None:
+			return False
+		
+		if not self.isSeekable():
+			if state not in [self.SEEK_STATE_PLAY, self.SEEK_STATE_PAUSE]:
+				state = self.SEEK_STATE_PLAY
+		
+		pauseable = service.pause()
+
+		if pauseable is None:
+			print "not pauseable."
+			state = self.SEEK_STATE_PLAY
+		
+		oldstate = self.seekstate
+		self.seekstate = state
+		
+		for i in range(3):
+			if oldstate[i] != self.seekstate[i]:
+				(self.session.nav.pause, pauseable.setFastForward, pauseable.setSlowMotion)[i](self.seekstate[i])
+
+		for c in self.onPlayStateChanged:
+			c(self.seekstate)
+		
+		self.checkSkipShowHideLock()
+
+		return True
+		
+	def pauseService(self):
+		if self.seekstate == self.SEEK_STATE_PAUSE:
+			print "pause, but in fact unpause"
+			self.unPauseService()
+		else:
+			if self.seekstate == self.SEEK_STATE_PLAY:
+				print "yes, playing."
+			else:
+				print "no", self.seekstate
+			print "pause"
+			self.setSeekState(self.SEEK_STATE_PAUSE);
+		
+	def unPauseService(self):
+		print "unpause"
+		self.setSeekState(self.SEEK_STATE_PLAY);
+	
+	def doSeek(self, seektime):
+		print "doseek", seektime
+		service = self.session.nav.getCurrentService()
+		if service is None:
+			return
+		
+		seekable = self.getSeek()
+		if seekable is None:
+			return
+		
+		seekable.seekTo(90 * seektime)
+
+	def seekFwd(self):
+		print "start fwd timer"
+		self.fwdtimer = True
+		self.fwdKeyTimer.start(500)
+
+	def seekBack(self):
+		print "start rewind timer"
+		self.rwdtimer = True
+		self.rwdKeyTimer.start(500)
+
+	def seekFwdUp(self):
+		print "seekFwdUp"
+		if self.fwdtimer:
+			self.fwdKeyTimer.stop()
+			self.fwdtimer = False
+			lookup = {
+					self.SEEK_STATE_PLAY: self.SEEK_STATE_FF_2X,
+					self.SEEK_STATE_PAUSE: self.SEEK_STATE_SM_EIGHTH,
+					self.SEEK_STATE_FF_2X: self.SEEK_STATE_FF_4X,
+					self.SEEK_STATE_FF_4X: self.SEEK_STATE_FF_8X,
+					self.SEEK_STATE_FF_8X: self.SEEK_STATE_FF_32X,
+					self.SEEK_STATE_FF_32X: self.SEEK_STATE_FF_64X,
+					self.SEEK_STATE_FF_64X: self.SEEK_STATE_FF_128X,
+					self.SEEK_STATE_FF_128X: self.SEEK_STATE_FF_128X,
+					self.SEEK_STATE_BACK_4X: self.SEEK_STATE_PLAY,
+					self.SEEK_STATE_BACK_32X: self.SEEK_STATE_BACK_4X,
+					self.SEEK_STATE_BACK_64X: self.SEEK_STATE_BACK_32X,
+					self.SEEK_STATE_BACK_128X: self.SEEK_STATE_BACK_64X,
+					self.SEEK_STATE_SM_HALF: self.SEEK_STATE_SM_HALF,
+					self.SEEK_STATE_SM_QUARTER: self.SEEK_STATE_SM_HALF,
+					self.SEEK_STATE_SM_EIGHTH: self.SEEK_STATE_SM_QUARTER
+				}
+			self.setSeekState(lookup[self.seekstate]);
+	
+	def seekBackUp(self):
+		print "seekBackUp"
+		if self.rwdtimer:
+			self.rwdKeyTimer.stop()
+			self.rwdtimer = False
+		
+			lookup = {
+					self.SEEK_STATE_PLAY: self.SEEK_STATE_BACK_4X,
+					self.SEEK_STATE_PAUSE: self.SEEK_STATE_PAUSE,
+					self.SEEK_STATE_FF_2X: self.SEEK_STATE_PLAY,
+					self.SEEK_STATE_FF_4X: self.SEEK_STATE_FF_2X,
+					self.SEEK_STATE_FF_8X: self.SEEK_STATE_FF_4X,
+					self.SEEK_STATE_FF_32X: self.SEEK_STATE_FF_8X,
+					self.SEEK_STATE_FF_64X: self.SEEK_STATE_FF_32X,
+					self.SEEK_STATE_FF_128X: self.SEEK_STATE_FF_64X,
+					self.SEEK_STATE_BACK_4X: self.SEEK_STATE_BACK_32X,
+					self.SEEK_STATE_BACK_32X: self.SEEK_STATE_BACK_64X,
+					self.SEEK_STATE_BACK_64X: self.SEEK_STATE_BACK_128X,
+					self.SEEK_STATE_BACK_128X: self.SEEK_STATE_BACK_128X,
+					self.SEEK_STATE_SM_HALF: self.SEEK_STATE_SM_QUARTER,
+					self.SEEK_STATE_SM_QUARTER: self.SEEK_STATE_SM_EIGHTH,
+					self.SEEK_STATE_SM_EIGHTH: self.SEEK_STATE_PAUSE
+				}
+			self.setSeekState(lookup[self.seekstate]);
+		
+	def fwdTimerFire(self):
+		print "Display seek fwd"
+		self.fwdKeyTimer.stop()
+		self.fwdtimer = False
+		self.session.openWithCallback(self.fwdSeekTo, MinuteInput)
+		
+	def fwdSeekTo(self, minutes):
+		print "Seek", minutes, "minutes forward"
+		if minutes != 0:
+			seekable = self.getSeek()
+			if seekable is not None:
+				seekable.seekRelative(1, minutes * 60 * 90000)
+	
+	def rwdTimerFire(self):
+		print "rwdTimerFire"
+		self.rwdKeyTimer.stop()
+		self.rwdtimer = False
+		self.session.openWithCallback(self.rwdSeekTo, MinuteInput)
+	
+	def rwdSeekTo(self, minutes):
+		print "rwdSeekTo"
+		self.fwdSeekTo(0 - minutes)
+	
+	def checkSkipShowHideLock(self):
+		wantlock = self.seekstate != self.SEEK_STATE_PLAY
+		
+		if self.lockedBecauseOfSkipping and not wantlock:
+			self.unlockShow()
+			self.lockedBecauseOfSkipping = False
+		
+		if wantlock and not self.lockedBecauseOfSkipping:
+			self.lockShow()
+			self.lockedBecauseOfSkipping = True
+
+	def __evEOF(self):
+		self.setSeekState(self.SEEK_STATE_PAUSE)
+	
+	def __evSOF(self):
+		self.setSeekState(self.SEEK_STATE_PLAY)
+		self.doSeek(0)
+
+	def seekRelative(self, diff):
+		seekable = self.getSeek()
+		if seekable is not None:
+			seekable.seekRelative(0, diff)
+
+from Screens.PVRState import PVRState
+
+class InfoBarPVRState:
+	def __init__(self):
+		self.onPlayStateChanged.append(self.__playStateChanged)
+		self.pvrStateDialog = self.session.instantiateDialog(PVRState)
+		self.onShow.append(self.__mayShow)
+		self.onHide.append(self.pvrStateDialog.hide)
+	
+	def __mayShow(self):
+		if self.seekstate != self.SEEK_STATE_PLAY:
+			self.pvrStateDialog.show()
+
+	def __playStateChanged(self, state):
+		playstateString = state[3]
+		self.pvrStateDialog["state"].setText(playstateString)
+		self.__mayShow()
+
+class InfoBarShowMovies:
+
+	# i don't really like this class. 
+	# it calls a not further specified "movie list" on up/down/movieList,
+	# so this is not more than an action map
+	def __init__(self):
+		self["MovieListActions"] = HelpableActionMap(self, "InfobarMovieListActions", 
+			{
+				"movieList": (self.showMovies, "movie list"),
+				"up": (self.showMovies, "movie list"),
+				"down": (self.showMovies, "movie list")
+			})
+
+# InfoBarTimeshift requires InfoBarSeek, instantiated BEFORE!
+
+# Hrmf.
+#
+# Timeshift works the following way:
+#                                         demux0   demux1                    "TimeshiftActions" "TimeshiftActivateActions" "SeekActions"
+# - normal playback                       TUNER    unused      PLAY               enable                disable              disable
+# - user presses "yellow" button.         TUNER    record      PAUSE              enable                disable              enable
+# - user presess pause again              FILE     record      PLAY               enable                disable              enable
+# - user fast forwards                    FILE     record      FF                 enable                disable              enable
+# - end of timeshift buffer reached       TUNER    record      PLAY               enable                enable               disable
+# - user backwards                        FILE     record      BACK  # !!         enable                disable              enable
+#
+
+# in other words:
+# - when a service is playing, pressing the "timeshiftStart" button ("yellow") enables recording ("enables timeshift"),
+# freezes the picture (to indicate timeshift), sets timeshiftMode ("activates timeshift")
+# now, the service becomes seekable, so "SeekActions" are enabled, "TimeshiftEnableActions" are disabled.
+# - the user can now PVR around
+# - if it hits the end, the service goes into live mode ("deactivates timeshift", it's of course still "enabled")
+# the service looses it's "seekable" state. It can still be paused, but just to activate timeshift right
+# after!
+# the seek actions will be disabled, but the timeshiftActivateActions will be enabled
+# - if the user rewinds, or press pause, timeshift will be activated again
+
+# note that a timeshift can be enabled ("recording") and
+# activated (currently time-shifting).
+
+class InfoBarTimeshift:
+	def __init__(self):
+		self["TimeshiftActions"] = HelpableActionMap(self, "InfobarTimeshiftActions", 
+			{
+				"timeshiftStart": (self.startTimeshift, "start timeshift"),  # the "yellow key"
+				"timeshiftStop": (self.stopTimeshift, "stop timeshift")      # currently undefined :), probably 'TV'
+			}, prio=1)
+		self["TimeshiftActivateActions"] = ActionMap(["InfobarTimeshiftActivateActions"],
+			{
+				"timeshiftActivateEnd": self.activateTimeshiftEnd, # something like "pause key"
+				"timeshiftActivateEndAndPause": self.activateTimeshiftEndAndPause  # something like "backward key"
+			}, prio=-1) # priority over record
+
+		self.timeshift_enabled = 0
+		self.timeshift_state = 0
+		self.ts_pause_timer = eTimer()
+		self.ts_pause_timer.timeout.get().append(self.pauseService)
+
+		self.__event_tracker = ServiceEventTracker(screen=self, eventmap=
+			{
+				iPlayableService.evSeekableStatusChanged: self.__seekableStatusChanged
+			})
+	
+	def getTimeshift(self):
+		service = self.session.nav.getCurrentService()
+		return service.timeshift()
+
+	def startTimeshift(self):
+		print "enable timeshift"
+		ts = self.getTimeshift()
+		if ts is None:
+			self.session.open(MessageBox, _("Timeshift not possible!"), MessageBox.TYPE_ERROR)
+			print "no ts interface"
+			return
+		
+		if self.timeshift_enabled:
+			print "hu, timeshift already enabled?"
+		else:
+			if not ts.startTimeshift():
+				self.timeshift_enabled = 1
+				
+				# PAUSE.
+				self.setSeekState(self.SEEK_STATE_PAUSE)
+				
+				# enable the "TimeshiftEnableActions", which will override
+				# the startTimeshift actions
+				self.__seekableStatusChanged()
+			else:
+				print "timeshift failed"
+
+	def stopTimeshift(self):
+		print "disable timeshift"
+		ts = self.getTimeshift()
+		if ts is None:
+			return
+		self.session.openWithCallback(self.stopTimeshiftConfirmed, MessageBox, _("Stop Timeshift?"), MessageBox.TYPE_YESNO)
+
+	def stopTimeshiftConfirmed(self, confirmed):
+		if not confirmed:
+			return
+
+		ts = self.getTimeshift()
+		if ts is None:
+			return
+
+		ts.stopTimeshift()
+		self.timeshift_enabled = 0
+
+		# disable actions
+		self.__seekableStatusChanged()
+	
+	# activates timeshift, and seeks to (almost) the end
+	def activateTimeshiftEnd(self):
+		ts = self.getTimeshift()
+		
+		if ts is None:
+			return
+		
+		if ts.isTimeshiftActive():
+			print "!! activate timeshift called - but shouldn't this be a normal pause?"
+			self.pauseService()
+		else:
+			self.setSeekState(self.SEEK_STATE_PLAY)
+			ts.activateTimeshift()
+			self.seekRelative(0)
+	
+	# same as activateTimeshiftEnd, but pauses afterwards.
+	def activateTimeshiftEndAndPause(self):
+		state = self.seekstate
+		self.activateTimeshiftEnd()
+		
+		# well, this is "andPause", but it could be pressed from pause,
+		# when pausing on the (fake-)"live" picture, so an un-pause
+		# is perfectly ok.
+		
+		print "now, pauseService"
+		if state == self.SEEK_STATE_PLAY:
+			print "is PLAYING, start pause timer"
+			self.ts_pause_timer.start(200, 1)
+		else:
+			print "unpause"
+			self.unPauseService()
+	
+	def __seekableStatusChanged(self):
+		enabled = False
+		
+		print "self.isSeekable", self.isSeekable()
+		print "self.timeshift_enabled", self.timeshift_enabled
+		
+		# when this service is not seekable, but timeshift
+		# is enabled, this means we can activate
+		# the timeshift
+		if not self.isSeekable() and self.timeshift_enabled:
+			enabled = True
+
+		print "timeshift activate:", enabled
+		self["TimeshiftActivateActions"].setEnabled(enabled)
+
+from RecordTimer import parseEvent
+
+class InfoBarInstantRecord:
+	"""Instant Record - handles the instantRecord action in order to 
+	start/stop instant records"""
+	def __init__(self):
+		self["InstantRecordActions"] = HelpableActionMap(self, "InfobarInstantRecord",
+			{
+				"instantRecord": (self.instantRecord, "Instant Record..."),
+			})
+		self.recording = None
+		
+		self["BlinkingPoint"] = BlinkingPixmapConditional()
+		self.onShown.append(self["BlinkingPoint"].hideWidget)
+		self["BlinkingPoint"].setConnect(self.session.nav.RecordTimer.isRecording)
+		
+	def stopCurrentRecording(self):	
+		self.session.nav.RecordTimer.removeEntry(self.recording)
+		self.recording = None
+			
+	def startInstantRecording(self):
+		serviceref = self.session.nav.getCurrentlyPlayingServiceReference()
+		
+		# try to get event info
+		event = None
+		try:
+			service = self.session.nav.getCurrentService()
+			info = service.info()
+			ev = info.getEvent(0)
+			event = ev
+		except:
+			pass
+		
+		if event is not None:
+			data = parseEvent(event)
+			begin = time.time()
+			end = begin + 3600 * 10
+			
+			data = (begin, end, data[2], data[3], data[4])
+		else:
+			data = (time.time(), time.time() + 3600 * 10, "instant record", "", None)
+		
+		# fix me, description. 
+		self.recording = self.session.nav.recordWithTimer(serviceref, *data)
+		self.recording.dontSave = True
+		
+		#self["BlinkingPoint"].setConnect(lambda: self.recording.isRunning())
+		
+	def isInstantRecordRunning(self):
+		if self.recording != None:
+			if self.recording.isRunning():
+				return True
+		return False
+
+	def recordQuestionCallback(self, answer):
+		if answer == False:
+			return
+		
+		if self.isInstantRecordRunning():
+			self.stopCurrentRecording()
+		else:
+			self.startInstantRecording()
+
+	def instantRecord(self):
+		try:
+			stat = os.stat(resolveFilename(SCOPE_HDD))
+		except:
+			self.session.open(MessageBox, _("No HDD found or HDD not initialized!"), MessageBox.TYPE_ERROR)
+			return
+	
+		if self.isInstantRecordRunning():
+			self.session.openWithCallback(self.recordQuestionCallback, MessageBox, _("Do you want to stop the current\n(instant) recording?"))
+		else:
+			self.session.openWithCallback(self.recordQuestionCallback, MessageBox, _("Start recording?"))
+
+from Screens.AudioSelection import AudioSelection
+
+class InfoBarAudioSelection:
+	def __init__(self):
+		self["AudioSelectionAction"] = HelpableActionMap(self, "InfobarAudioSelectionActions", 
+			{
+				"audioSelection": (self.audioSelection, "Audio Options..."),
+			})
+
+	def audioSelection(self):
+		service = self.session.nav.getCurrentService()
+		audio = service.audioTracks()
+		n = audio.getNumberOfTracks()
+		if n > 0:
+			self.session.open(AudioSelection, audio)
+
+from Screens.SubserviceSelection import SubserviceSelection
+
+class InfoBarSubserviceSelection:
+	def __init__(self):
+		self["SubserviceSelectionAction"] = HelpableActionMap(self, "InfobarSubserviceSelectionActions",
+			{
+				"subserviceSelection": (self.subserviceSelection, "Subservice list..."),
+			})
+
+	def subserviceSelection(self):
+		service = self.session.nav.getCurrentService()
+		subservices = service.subServices()
+		n = subservices.getNumberOfSubservices()
+		if n > 0:
+			self.session.openWithCallback(self.subserviceSelected, SubserviceSelection, subservices)
+
+	def subserviceSelected(self, service):
+		if not service is None:
+			self.session.nav.playService(service)
+
+class InfoBarAdditionalInfo:
+	def __init__(self):
+		self["DolbyActive"] = Pixmap()
+		self["CryptActive"] = Pixmap()
+		self["FormatActive"] = Pixmap()
+		
+		self["ButtonRed"] = PixmapConditional(withTimer = False)
+		self["ButtonRed"].setConnect(lambda: harddiskmanager.HDDCount() > 0)
+		self.onShown.append(self["ButtonRed"].update)
+		self["ButtonRedText"] = LabelConditional(text = _("Record"), withTimer = False)
+		self["ButtonRedText"].setConnect(lambda: harddiskmanager.HDDCount() > 0)
+		self.onShown.append(self["ButtonRedText"].update)
+
+		self["ButtonGreen"] = Pixmap()
+		self["ButtonGreenText"] = Label(_("Subservices"))
+
+		self["ButtonYellow"] = PixmapConditional(withTimer = False)
+		self["ButtonYellow"].setConnect(lambda: False)
+
+		self["ButtonBlue"] = PixmapConditional(withTimer = False)
+		self["ButtonBlue"].setConnect(lambda: False)
+
+		self.session.nav.event.append(self.gotServiceEvent) # we like to get service events
+
+	def hideSubServiceIndication(self):
+		self["ButtonGreen"].hideWidget()
+		self["ButtonGreenText"].hide()
+
+	def showSubServiceIndication(self):
+		self["ButtonGreen"].showWidget()
+		self["ButtonGreenText"].show()
+
+	def checkFormat(self, service):
+		info = service.info()
+		if info is not None:
+			aspect = info.getInfo(iServiceInformation.sAspect)
+			if aspect in [ 3, 4, 7, 8, 0xB, 0xC, 0xF, 0x10 ]:
+				self["FormatActive"].showWidget()
+			else:
+				self["FormatActive"].hideWidget()
+
+	def checkSubservices(self, service):
+		if service.subServices().getNumberOfSubservices() > 0:
+			self.showSubServiceIndication()
+		else:
+			self.hideSubServiceIndication()
+
+	def checkDolby(self, service):
+		# FIXME
+		dolby = False
+		audio = service.audioTracks()
+		if audio is not None:
+			n = audio.getNumberOfTracks()
+			for x in range(n):
+				i = audio.getTrackInfo(x)
+				description = i.getDescription();
+				if description.find("AC3") != -1 or description.find("DTS") != -1:
+					dolby = True
+					break
+		if dolby:
+			self["DolbyActive"].showWidget()
+		else:
+			self["DolbyActive"].hideWidget()
+
+	def checkCrypted(self, service):
+		info = service.info()
+		if info is not None:
+			if info.getInfo(iServiceInformation.sIsCrypted) > 0:
+				self["CryptActive"].showWidget()
+			else:
+				self["CryptActive"].hideWidget()
+
+	def gotServiceEvent(self, ev):
+		service = self.session.nav.getCurrentService()
+		if ev == iPlayableService.evUpdatedEventInfo:
+			self.checkSubservices(service)
+			self.checkFormat(service)
+		elif ev == iPlayableService.evUpdatedInfo:
+			self.checkCrypted(service)
+			self.checkDolby(service)
+		elif ev == iPlayableService.evEnd:
+			self.hideSubServiceIndication()
+			self["CryptActive"].hideWidget()
+			self["DolbyActive"].hideWidget()
+			self["FormatActive"].hideWidget()
+
+class InfoBarNotifications:
+	def __init__(self):
+		self.onExecBegin.append(self.checkNotifications)
+		Notifications.notificationAdded.append(self.checkNotificationsIfExecing)
+	
+	def checkNotificationsIfExecing(self):
+		if self.execing:
+			self.checkNotifications()
+
+	def checkNotifications(self):
+		if len(Notifications.notifications):
+			n = Notifications.notifications[0]
+			Notifications.notifications = Notifications.notifications[1:]
+			print "open",n
+			cb = n[0]
+			if cb is not None:
+				self.session.openWithCallback(cb, *n[1:])
+			else:
+				self.session.open(*n[1:])
+
+class InfoBarServiceNotifications:
+	def __init__(self):
+		self.__event_tracker = ServiceEventTracker(screen=self, eventmap=
+			{
+				iPlayableService.evEnd: self.serviceHasEnded
+			})
+
+	def serviceHasEnded(self):
+		print "service end!"
+
+		try:
+			self.setSeekState(self.SEEK_STATE_PLAY)
+		except:
+			pass

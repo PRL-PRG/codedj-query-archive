@@ -1,0 +1,35 @@
+class SynthObjectsParameters:
+
+    def __init__( self ):
+        self.types = [0,0,0,0,0,0,0,0,0,0,0,0]
+        self.controlsParameters = [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        self.sourcesParameters = [1,.5,5,1,1,.5,5,1,1,.5,5,1,1,.5,5,1]
+        self.fxsParameters = [100,3000,.8,1,100,3000,.8,1,100,3000,.8,1,100,3000,.8,1]
+        self.choiceParamsSet = [self.controlsParameters, self.sourcesParameters, self.fxsParameters]
+
+    def update( self ):
+        self.choiceParamsSet = [self.controlsParameters, self.sourcesParameters, self.fxsParameters]
+
+    def getTypes( self ):
+        return self.types
+
+    def getControlsParameters( self ):
+        return self.controlsParameters
+
+    def getSourcesParameters( self ):
+        return self.sourcesParameters
+
+    def getFxsParameters( self ):
+        return self.fxsParameters
+
+    def setType( self, pos, value ):
+        self.types[pos] = value
+    
+    def setControlParameter( self, pos, value ):
+        self.controlsParameters[pos] = value
+
+    def setSourceParameter( self, pos, value ):
+        self.sourcesParameters[pos] = value
+
+    def setFxParameter( self, pos, value ):
+        self.fxsParameters[pos] = value              

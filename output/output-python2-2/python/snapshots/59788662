@@ -1,0 +1,591 @@
+"""cffLib.py -- read/write tools for Adobe CFF fonts."""
+
+#
+# $Id: cffLib.py,v 1.11 2002-05-14 13:51:51 jvr Exp $
+#
+
+import struct, sstruct
+import string
+import types
+from fontTools.misc import psCharStrings
+
+
+cffHeaderFormat = """
+	major:   B
+	minor:   B
+	hdrSize: B
+	offSize: B
+"""
+
+class CFFFontSet:
+	
+	def __init__(self):
+		self.fonts = {}
+	
+	def decompile(self, file):
+		sstruct.unpack(cffHeaderFormat, file.read(4), self)
+		assert self.major == 1 and self.minor == 0, \
+				"unknown CFF format: %d.%d" % (self.major, self.minor)
+		
+		self.fontNames = readINDEX(file)
+		topDicts = readINDEX(file)
+		strings = IndexedStrings(readINDEX(file))
+		globalSubrs = readINDEX(file)
+		self.GlobalSubrs = map(psCharStrings.T2CharString, globalSubrs)
+		
+		for i in range(len(topDicts)):
+			font = self.fonts[self.fontNames[i]] = CFFFont()
+			font.GlobalSubrs = self.GlobalSubrs
+			file.seek(0)
+			font.decompile(file, topDicts[i], strings, self)  # maybe only 'on demand'?
+	
+	def compile(self):
+		strings = IndexedStrings()
+		XXXX
+	
+	def toXML(self, xmlWriter, progress=None):
+		xmlWriter.newline()
+		for fontName in self.fontNames:
+			xmlWriter.begintag("CFFFont", name=fontName)
+			xmlWriter.newline()
+			font = self.fonts[fontName]
+			font.toXML(xmlWriter, progress)
+			xmlWriter.endtag("CFFFont")
+			xmlWriter.newline()
+		xmlWriter.newline()
+		xmlWriter.begintag("GlobalSubrs")
+		xmlWriter.newline()
+		for i in range(len(self.GlobalSubrs)):
+			xmlWriter.newline()
+			xmlWriter.begintag("CharString", id=i)
+			xmlWriter.newline()
+			self.GlobalSubrs[i].toXML(xmlWriter)
+			xmlWriter.endtag("CharString")
+			xmlWriter.newline()
+		xmlWriter.newline()
+		xmlWriter.endtag("GlobalSubrs")
+		xmlWriter.newline()
+		xmlWriter.newline()
+	
+	def fromXML(self, (name, attrs, content)):
+		xxx
+
+
+class CFFFont:
+	
+	def __init__(self):
+		pass
+	
+	def __getattr__(self, attr):
+		if not topDictDefaults.has_key(attr):
+			raise AttributeError, attr
+		return topDictDefaults[attr]
+	
+	def fromDict(self, dict):
+		self.__dict__.update(dict)
+	
+	def decompileCID(self, data, strings):
+		offset = self.FDArray
+		fontDicts, restdata = readINDEX(data[offset:])
+		subFonts = []
+		for topDictData in fontDicts:
+			subFont = CFFFont()
+			subFonts.append(subFont)
+			subFont.decompile(data, topDictData, strings, None)
+
+		raise NotImplementedError
+	
+	def decompile(self, file, topDictData, strings, fontSet):
+		top = TopDictDecompiler(strings)
+		top.decompile(topDictData)
+		self.fromDict(top.getDict())
+		
+		if hasattr(self, "ROS"):
+			isCID = 1
+			# XXX CID subFonts
+			offset = self.FDArray
+			file.seek(offset)
+			fontDicts = readINDEX(file)
+			subFonts = self.subFonts = []
+			for topDictData in fontDicts:
+				subFont = CFFFont()
+				subFonts.append(subFont)
+				subFont.decompile(file, topDictData, strings, None)
+			# XXX
+		else:
+			isCID = 0
+			size, offset = self.Private
+			file.seek(offset)
+			privateData = file.read(size)
+			file.seek(offset)
+			assert len(privateData) == size
+			self.Private = PrivateDict()
+			self.Private.decompile(file, privateData, strings)
+		
+		if hasattr(self, "CharStrings"):
+			file.seek(self.CharStrings)
+			rawCharStrings = readINDEX(file)
+			nGlyphs = len(rawCharStrings)
+		
+		# get charset (or rather: get glyphNames)
+		if self.charset == 0:
+			pass  # XXX standard charset
+		else:
+			file.seek(self.charset)
+			format = ord(file.read(1))
+			if format == 0:
+				xxx
+			elif format == 1:
+				charset = parseCharsetFormat1(nGlyphs, file, strings, isCID)
+			elif format == 2:
+				charset = parseCharsetFormat2(nGlyphs, file, strings, isCID)
+			elif format == 3:
+				xxx
+			else:
+				xxx
+			self.charset = charset
+			assert len(charset) == nGlyphs
+		
+		if self.charset <> 0:
+			self.CharStrings = charStrings = {}
+			if self.CharstringType == 2:
+				# Type 2 CharStrings
+				charStringClass = psCharStrings.T2CharString
+			else:
+				# Type 1 CharStrings
+				charStringClass = psCharStrings.T1CharString
+			
+			for i in range(nGlyphs):
+				charStrings[charset[i]] = charStringClass(rawCharStrings[i])
+			assert len(charStrings) == nGlyphs
+		else:
+			assert not hasattr(self, "CharStrings")
+		
+		# XXX Encoding!
+		encoding = self.Encoding
+		if encoding not in (0, 1):
+			# encoding is an _offset_ from the beginning of 'data' to an encoding subtable
+			XXX
+			self.Encoding = encoding
+	
+	def getGlyphOrder(self):
+		return self.charset
+	
+	def setGlyphOrder(self, glyphOrder):
+		self.charset = glyphOrder
+	
+	def decompileAllCharStrings(self):
+		if self.CharstringType == 2:
+			# Type 2 CharStrings
+			decompiler = psCharStrings.SimpleT2Decompiler(self.Private.Subrs, self.GlobalSubrs)
+			for charString in self.CharStrings.values():
+				if charString.needsDecompilation():
+					decompiler.reset()
+					decompiler.execute(charString)
+		else:
+			# Type 1 CharStrings
+			for charString in self.CharStrings.values():
+				charString.decompile()
+	
+	def toXML(self, xmlWriter, progress=None):
+		xmlWriter.newline()
+		# first dump the simple values
+		self.toXMLSimpleValues(xmlWriter)
+		
+		# dump charset
+		# XXX
+		
+		# decompile all charstrings
+		if progress:
+			progress.setlabel("Decompiling CharStrings...")
+		self.decompileAllCharStrings()
+		
+		# dump private dict
+		xmlWriter.begintag("Private")
+		xmlWriter.newline()
+		self.Private.toXML(xmlWriter)
+		xmlWriter.endtag("Private")
+		xmlWriter.newline()
+		
+		self.toXMLCharStrings(xmlWriter, progress)
+	
+	def toXMLSimpleValues(self, xmlWriter):
+		keys = self.__dict__.keys()
+		keys.remove("CharStrings")
+		keys.remove("Private")
+		keys.remove("charset")
+		keys.remove("GlobalSubrs")
+		keys.sort()
+		for key in keys:
+			value = getattr(self, key)
+			if key == "Encoding":
+				if value == 0:
+					# encoding is (Adobe) Standard Encoding
+					value = "StandardEncoding"
+				elif value == 1:
+					# encoding is Expert Encoding
+					value = "ExpertEncoding"
+			if type(value) == types.ListType:
+				value = string.join(map(str, value), " ")
+			else:
+				value = str(value)
+			xmlWriter.begintag(key)
+			if hasattr(value, "toXML"):
+				xmlWriter.newline()
+				value.toXML(xmlWriter)
+				xmlWriter.newline()
+			else:
+				xmlWriter.write(value)
+			xmlWriter.endtag(key)
+			xmlWriter.newline()
+		xmlWriter.newline()
+	
+	def toXMLCharStrings(self, xmlWriter, progress=None):
+		charStrings = self.CharStrings
+		xmlWriter.newline()
+		xmlWriter.begintag("CharStrings")
+		xmlWriter.newline()
+		glyphNames = charStrings.keys()
+		glyphNames.sort()
+		for glyphName in glyphNames:
+			if progress:
+				progress.setlabel("Dumping 'CFF ' table... (%s)" % glyphName)
+				progress.increment()
+			xmlWriter.newline()
+			charString = charStrings[glyphName]
+			xmlWriter.begintag("CharString", name=glyphName)
+			xmlWriter.newline()
+			charString.toXML(xmlWriter)
+			xmlWriter.endtag("CharString")
+			xmlWriter.newline()
+		xmlWriter.newline()
+		xmlWriter.endtag("CharStrings")
+		xmlWriter.newline()
+
+
+class PrivateDict:
+	
+	def __init__(self):
+		pass
+	
+	def decompile(self, file, privateData, strings):
+		p = PrivateDictDecompiler(strings)
+		p.decompile(privateData)
+		self.fromDict(p.getDict())
+		
+		# get local subrs
+		if hasattr(self, "Subrs"):
+			file.seek(self.Subrs, 1)
+			localSubrs = readINDEX(file)
+			self.Subrs = map(psCharStrings.T2CharString, localSubrs)
+		else:
+			self.Subrs = []
+	
+	def toXML(self, xmlWriter):
+		xmlWriter.newline()
+		keys = self.__dict__.keys()
+		keys.remove("Subrs")
+		for key in keys:
+			value = getattr(self, key)
+			if type(value) == types.ListType:
+				value = string.join(map(str, value), " ")
+			else:
+				value = str(value)
+			xmlWriter.begintag(key)
+			xmlWriter.write(value)
+			xmlWriter.endtag(key)
+			xmlWriter.newline()
+		# write subroutines
+		xmlWriter.newline()
+		xmlWriter.begintag("Subrs")
+		xmlWriter.newline()
+		for i in range(len(self.Subrs)):
+			xmlWriter.newline()
+			xmlWriter.begintag("CharString", id=i)
+			xmlWriter.newline()
+			self.Subrs[i].toXML(xmlWriter)
+			xmlWriter.endtag("CharString")
+			xmlWriter.newline()
+		xmlWriter.newline()
+		xmlWriter.endtag("Subrs")
+		xmlWriter.newline()
+		xmlWriter.newline()
+	
+	def __getattr__(self, attr):
+		if not privateDictDefaults.has_key(attr):
+			raise AttributeError, attr
+		return privateDictDefaults[attr]
+	
+	def fromDict(self, dict):
+		self.__dict__.update(dict)
+
+
+def readINDEX(file):
+	count, = struct.unpack(">H", file.read(2))
+	if count == 0:
+		return []
+	offSize = ord(file.read(1))
+	offsets = []
+	for index in range(count+1):
+		chunk = file.read(offSize)
+		chunk = '\0' * (4 - offSize) + chunk
+		offset, = struct.unpack(">L", chunk)
+		offset = int(offset)
+		offsets.append(offset)
+	offsetBase = file.tell() - 1
+	prev = offsets[0]
+	stuff = []
+	for next in offsets[1:]:
+		assert offsetBase + prev == file.tell()
+		chunk = file.read(next - prev)
+		assert len(chunk) == next - prev
+		stuff.append(chunk)
+		prev = next
+	return stuff
+
+
+def parseCharsetFormat1(nGlyphs, file, strings, isCID):
+	charset = ['.notdef']
+	count = 1
+	while count < nGlyphs:
+		first, = struct.unpack(">H", file.read(2))
+		nLeft = ord(file.read(1))
+		if isCID:
+			for CID in range(first, first+nLeft+1):
+				charset.append(CID)
+		else:
+			for SID in range(first, first+nLeft+1):
+				charset.append(strings[SID])
+		count = count + nLeft + 1
+	return charset
+
+
+def parseCharsetFormat2(nGlyphs, file, strings, isCID):
+	charset = ['.notdef']
+	count = 1
+	while count < nGlyphs:
+		first, = struct.unpack(">H", file.read(2))
+		nLeft, = struct.unpack(">H", file.read(2))
+		if isCID:
+			for CID in range(first, first+nLeft+1):
+				charset.append(CID)
+		else:
+			for SID in range(first, first+nLeft+1):
+				charset.append(strings[SID])
+		count = count + nLeft + 1
+	return charset
+
+
+topDictOperators = [
+#   opcode     name                  argument type
+	(0,        'version',            'SID'),
+	(1,        'Notice',             'SID'),
+	(2,        'FullName',           'SID'),
+	(3,        'FamilyName',         'SID'),
+	(4,        'Weight',             'SID'),
+	(5,        'FontBBox',           'array'),
+	(13,       'UniqueID',           'number'),
+	(14,       'XUID',               'array'),
+	(15,       'charset',            'number'),
+	(16,       'Encoding',           'number'),
+	(17,       'CharStrings',        'number'),
+	(18,       'Private',            ('number', 'number')),
+	((12, 0),  'Copyright',          'SID'),
+	((12, 1),  'isFixedPitch',       'number'),
+	((12, 2),  'ItalicAngle',        'number'),
+	((12, 3),  'UnderlinePosition',  'number'),
+	((12, 4),  'UnderlineThickness', 'number'),
+	((12, 5),  'PaintType',          'number'),
+	((12, 6),  'CharstringType',     'number'),
+	((12, 7),  'FontMatrix',         'array'),
+	((12, 8),  'StrokeWidth',        'number'),
+	((12, 20), 'SyntheticBase',      'number'),
+	((12, 21), 'PostScript',         'SID'),
+	((12, 22), 'BaseFontName',       'SID'),
+	# CID additions
+	((12, 30), 'ROS',                ('SID', 'SID', 'number')),
+	((12, 31), 'CIDFontVersion',     'number'),
+	((12, 32), 'CIDFontRevision',    'number'),
+	((12, 33), 'CIDFontType',        'number'),
+	((12, 34), 'CIDCount',           'number'),
+	((12, 35), 'UIDBase',            'number'),
+	((12, 36), 'FDArray',            'number'),
+	((12, 37), 'FDSelect',           'number'),
+	((12, 38), 'FontName',           'SID'),
+]
+
+topDictDefaults = {
+	'isFixedPitch':        0,
+	'ItalicAngle':         0,
+	'UnderlineThickness':  50,
+	'PaintType':           0,
+	'CharstringType':      2,
+	'FontMatrix':          [0.001, 0, 0, 0.001, 0, 0],
+	'FontBBox':            [0, 0, 0, 0],
+	'StrokeWidth':         0,
+	'charset':             0,
+	'Encoding':            0,
+	# CID defaults
+	'CIDFontVersion':      0,
+	'CIDFontRevision':     0,
+	'CIDFontType':         0,
+	'CIDCount':            8720,
+}
+
+class TopDictDecompiler(psCharStrings.DictDecompiler):
+	
+	operators = psCharStrings.buildOperatorDict(topDictOperators)
+	dictDefaults = topDictDefaults
+	
+
+privateDictOperators = [
+#   opcode     name                  argument type
+	(6,        'BlueValues',         'array'),
+	(7,        'OtherBlues',         'array'),
+	(8,        'FamilyBlues',        'array'),
+	(9,        'FamilyOtherBlues',   'array'),
+	(10,       'StdHW',              'number'),
+	(11,       'StdVW',              'number'),
+	(19,       'Subrs',              'number'),
+	(20,       'defaultWidthX',      'number'),
+	(21,       'nominalWidthX',      'number'),
+	((12, 9),  'BlueScale',          'number'),
+	((12, 10), 'BlueShift',          'number'),
+	((12, 11), 'BlueFuzz',           'number'),
+	((12, 12), 'StemSnapH',          'array'),
+	((12, 13), 'StemSnapV',          'array'),
+	((12, 14), 'ForceBold',          'number'),
+	((12, 17), 'LanguageGroup',      'number'),
+	((12, 18), 'ExpansionFactor',    'number'),
+	((12, 19), 'initialRandomSeed',  'number'),
+]
+
+privateDictDefaults = {
+	'defaultWidthX':       0,
+	'nominalWidthX':       0,
+	'BlueScale':           0.039625,
+	'BlueShift':           7,
+	'BlueFuzz':            1,
+	'ForceBold':           0,
+	'LanguageGroup':       0,
+	'ExpansionFactor':     0.06,
+	'initialRandomSeed':   0,
+}
+
+class PrivateDictDecompiler(psCharStrings.DictDecompiler):
+	
+	operators = psCharStrings.buildOperatorDict(privateDictOperators)
+	dictDefaults = privateDictDefaults
+
+
+class IndexedStrings:
+	
+	def __init__(self, strings=None):
+		if strings is None:
+			strings = []
+		self.strings = strings
+	
+	def __getitem__(self, SID):
+		if SID < cffStandardStringCount:
+			return cffStandardStrings[SID]
+		else:
+			return self.strings[SID - cffStandardStringCount]
+	
+	def getSID(self, s):
+		if not hasattr(self, "stringMapping"):
+			self.buildStringMapping()
+		if cffStandardStringMapping.has_key(s):
+			SID = cffStandardStringMapping[s]
+		if self.stringMapping.has_key(s):
+			SID = self.stringMapping[s]
+		else:
+			SID = len(self.strings) + cffStandardStringCount
+			self.strings.append(s)
+			self.stringMapping[s] = SID
+		return SID
+	
+	def getStrings(self):
+		return self.strings
+	
+	def buildStringMapping(self):
+		self.stringMapping = {}
+		for index in range(len(self.strings)):
+			self.stringMapping[self.strings[index]] = index + cffStandardStringCount
+
+
+# The 391 Standard Strings as used in the CFF format.
+# from Adobe Technical None #5176, version 1.0, 18 March 1998
+
+cffStandardStrings = ['.notdef', 'space', 'exclam', 'quotedbl', 'numbersign', 
+		'dollar', 'percent', 'ampersand', 'quoteright', 'parenleft', 'parenright', 
+		'asterisk', 'plus', 'comma', 'hyphen', 'period', 'slash', 'zero', 'one', 
+		'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'colon', 
+		'semicolon', 'less', 'equal', 'greater', 'question', 'at', 'A', 'B', 'C', 
+		'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 
+		'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'bracketleft', 'backslash', 
+		'bracketright', 'asciicircum', 'underscore', 'quoteleft', 'a', 'b', 'c', 
+		'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 
+		's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'braceleft', 'bar', 'braceright', 
+		'asciitilde', 'exclamdown', 'cent', 'sterling', 'fraction', 'yen', 'florin', 
+		'section', 'currency', 'quotesingle', 'quotedblleft', 'guillemotleft', 
+		'guilsinglleft', 'guilsinglright', 'fi', 'fl', 'endash', 'dagger', 
+		'daggerdbl', 'periodcentered', 'paragraph', 'bullet', 'quotesinglbase', 
+		'quotedblbase', 'quotedblright', 'guillemotright', 'ellipsis', 'perthousand', 
+		'questiondown', 'grave', 'acute', 'circumflex', 'tilde', 'macron', 'breve', 
+		'dotaccent', 'dieresis', 'ring', 'cedilla', 'hungarumlaut', 'ogonek', 'caron', 
+		'emdash', 'AE', 'ordfeminine', 'Lslash', 'Oslash', 'OE', 'ordmasculine', 'ae', 
+		'dotlessi', 'lslash', 'oslash', 'oe', 'germandbls', 'onesuperior', 
+		'logicalnot', 'mu', 'trademark', 'Eth', 'onehalf', 'plusminus', 'Thorn', 
+		'onequarter', 'divide', 'brokenbar', 'degree', 'thorn', 'threequarters', 
+		'twosuperior', 'registered', 'minus', 'eth', 'multiply', 'threesuperior', 
+		'copyright', 'Aacute', 'Acircumflex', 'Adieresis', 'Agrave', 'Aring', 
+		'Atilde', 'Ccedilla', 'Eacute', 'Ecircumflex', 'Edieresis', 'Egrave', 
+		'Iacute', 'Icircumflex', 'Idieresis', 'Igrave', 'Ntilde', 'Oacute', 
+		'Ocircumflex', 'Odieresis', 'Ograve', 'Otilde', 'Scaron', 'Uacute', 
+		'Ucircumflex', 'Udieresis', 'Ugrave', 'Yacute', 'Ydieresis', 'Zcaron', 
+		'aacute', 'acircumflex', 'adieresis', 'agrave', 'aring', 'atilde', 'ccedilla', 
+		'eacute', 'ecircumflex', 'edieresis', 'egrave', 'iacute', 'icircumflex', 
+		'idieresis', 'igrave', 'ntilde', 'oacute', 'ocircumflex', 'odieresis', 
+		'ograve', 'otilde', 'scaron', 'uacute', 'ucircumflex', 'udieresis', 'ugrave', 
+		'yacute', 'ydieresis', 'zcaron', 'exclamsmall', 'Hungarumlautsmall', 
+		'dollaroldstyle', 'dollarsuperior', 'ampersandsmall', 'Acutesmall', 
+		'parenleftsuperior', 'parenrightsuperior', 'twodotenleader', 'onedotenleader', 
+		'zerooldstyle', 'oneoldstyle', 'twooldstyle', 'threeoldstyle', 'fouroldstyle', 
+		'fiveoldstyle', 'sixoldstyle', 'sevenoldstyle', 'eightoldstyle', 
+		'nineoldstyle', 'commasuperior', 'threequartersemdash', 'periodsuperior', 
+		'questionsmall', 'asuperior', 'bsuperior', 'centsuperior', 'dsuperior', 
+		'esuperior', 'isuperior', 'lsuperior', 'msuperior', 'nsuperior', 'osuperior', 
+		'rsuperior', 'ssuperior', 'tsuperior', 'ff', 'ffi', 'ffl', 'parenleftinferior', 
+		'parenrightinferior', 'Circumflexsmall', 'hyphensuperior', 'Gravesmall', 
+		'Asmall', 'Bsmall', 'Csmall', 'Dsmall', 'Esmall', 'Fsmall', 'Gsmall', 'Hsmall', 
+		'Ismall', 'Jsmall', 'Ksmall', 'Lsmall', 'Msmall', 'Nsmall', 'Osmall', 'Psmall', 
+		'Qsmall', 'Rsmall', 'Ssmall', 'Tsmall', 'Usmall', 'Vsmall', 'Wsmall', 'Xsmall', 
+		'Ysmall', 'Zsmall', 'colonmonetary', 'onefitted', 'rupiah', 'Tildesmall', 
+		'exclamdownsmall', 'centoldstyle', 'Lslashsmall', 'Scaronsmall', 'Zcaronsmall', 
+		'Dieresissmall', 'Brevesmall', 'Caronsmall', 'Dotaccentsmall', 'Macronsmall', 
+		'figuredash', 'hypheninferior', 'Ogoneksmall', 'Ringsmall', 'Cedillasmall', 
+		'questiondownsmall', 'oneeighth', 'threeeighths', 'fiveeighths', 'seveneighths', 
+		'onethird', 'twothirds', 'zerosuperior', 'foursuperior', 'fivesuperior', 
+		'sixsuperior', 'sevensuperior', 'eightsuperior', 'ninesuperior', 'zeroinferior', 
+		'oneinferior', 'twoinferior', 'threeinferior', 'fourinferior', 'fiveinferior', 
+		'sixinferior', 'seveninferior', 'eightinferior', 'nineinferior', 'centinferior', 
+		'dollarinferior', 'periodinferior', 'commainferior', 'Agravesmall', 
+		'Aacutesmall', 'Acircumflexsmall', 'Atildesmall', 'Adieresissmall', 'Aringsmall', 
+		'AEsmall', 'Ccedillasmall', 'Egravesmall', 'Eacutesmall', 'Ecircumflexsmall', 
+		'Edieresissmall', 'Igravesmall', 'Iacutesmall', 'Icircumflexsmall', 
+		'Idieresissmall', 'Ethsmall', 'Ntildesmall', 'Ogravesmall', 'Oacutesmall', 
+		'Ocircumflexsmall', 'Otildesmall', 'Odieresissmall', 'OEsmall', 'Oslashsmall', 
+		'Ugravesmall', 'Uacutesmall', 'Ucircumflexsmall', 'Udieresissmall', 
+		'Yacutesmall', 'Thornsmall', 'Ydieresissmall', '001.000', '001.001', '001.002', 
+		'001.003', 'Black', 'Bold', 'Book', 'Light', 'Medium', 'Regular', 'Roman', 
+		'Semibold'
+]
+
+cffStandardStringCount = 391
+assert len(cffStandardStrings) == cffStandardStringCount
+# build reverse mapping
+cffStandardStringMapping = {}
+for _i in range(cffStandardStringCount):
+	cffStandardStringMapping[cffStandardStrings[_i]] = _i
+
+

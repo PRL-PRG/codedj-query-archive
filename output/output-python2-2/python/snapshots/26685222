@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+
+import gtk
+
+class EntryCompletionManager:
+    def __init__(self):
+        self.completions = gtk.ListStore(str)
+        self.entries = []
+        self.enabled = False
+        self.useContainsFunction = False
+        self.diag = None
+    def start(self, matching, inline, completions, diag):
+        self.enabled = True
+        self.diag = diag
+        self.useContainsFunction = matching == 2
+        self.diag.info("Enabling entry completion, using matching " + str(matching))
+        self.inlineCompletions = inline
+        if self.inlineCompletions:
+            self.diag.info(" - Inlining common completion prefixes in entries.")
+                
+        for completion in completions:
+            self.addTextCompletion(completion)
+            
+    def register(self, entry):
+        if self.enabled:
+            completion = gtk.EntryCompletion()
+            completion.set_model(self.completions)
+            if self.inlineCompletions:
+                completion.set_inline_completion(True)
+            completion.set_text_column(0)        
+            if self.useContainsFunction: # Matching on start is default for gtk.EntryCompletion
+                completion.set_match_func(self.containsMatchFunction)        
+
+            self.addCompletion(entry)
+            entry.set_completion(completion)
+            entry.connect('activate', self.addCompletion)
+            self.entries.append(entry)
+
+    def addCompletion(self, entry):
+        self.addTextCompletion(entry.get_text())
+
+    def addTextCompletion(self, text):
+        if self.enabled and text and text not in [row[0] for row in self.completions]:
+            self.diag.info("Adding entry completion " + repr(text) + " ...")
+            self.completions.prepend([text])            
+
+    def collectCompletions(self):
+        if self.enabled:
+            for entry in self.entries:
+                self.addCompletion(entry)
+
+    # Return true for any completion containing the key
+    def containsMatchFunction(self, completion, key_string, iter):
+        value = self.completions.get_value(iter, 0)
+        return value and value.lower().find(key_string) != -1
+    
+manager = EntryCompletionManager()

@@ -1,0 +1,1011 @@
+# Author: Gregor Leban (gregor.leban@fri.uni-lj.si)
+# Description:
+#    signal dialog, canvas options dialog
+
+from qt import *
+from qtcanvas import *
+from copy import copy
+from string import strip
+import sys
+from orngCanvasItems import *
+from qttable import *
+
+def indentedCheckBox(text, parent):
+    b = QHBox(parent)
+    sep = QWidget(b)
+    sep.setFixedSize(10, 10)
+    return QCheckBox(text, b)
+
+
+class QCanvasIcon(QCanvasRectangle):
+    def __init__(self, canvas, fileName):
+        QCanvasRectangle.__init__(self,canvas)
+        self.pixmap = QPixmap(fileName)
+        self.setZ(100)
+
+    def setCenterPos(self, x, y):
+        self.x = x - self.pixmap.width()/2.0
+        self.y = y - self.pixmap.height()/2.0
+
+    def drawShape(self, painter):
+        if self.pixmap:
+            painter.drawPixmap(self.x, self.y, self.pixmap)
+
+# this class is needed by signalDialog to show widgets and lines
+class SignalCanvasView(QCanvasView):
+    def __init__(self, dlg, *args):
+        apply(QCanvasView.__init__,(self,) + args)
+        self.dlg = dlg
+        self.bMouseDown = False
+        self.bLineDragging = False
+        self.tempLine = None
+        self.inWidget = None
+        self.outWidget = None
+        self.inWidgetIcon = None
+        self.outWidgetIcon = None
+        self.lines = []
+        self.outBoxes = []
+        self.inBoxes = []
+        self.texts = []
+
+        #self.connect(self, SIGNAL("contentsMoving(int,int)"), self.contentsMoving)
+
+    def addSignalList(self, outName, inName, outputs, inputs, outIconName, inIconName):
+        items = self.canvas().allItems()
+        for item in items: item.hide()
+        self.lines = []; self.outBoxes = []; self.inBoxes = []; self.texts = []
+        xSpaceBetweenWidgets = 100  # space between widgets
+        xWidgetOff = 10     # offset for widget position
+        yWidgetOffTop = 10     # offset for widget position
+        yWidgetOffBottom = 30     # offset for widget position
+        ySignalOff = 10     # space between the top of the widget and first signal
+        ySignalSpace = 50   # space between two neighbouring signals
+        ySignalSize = 20    # height of the signal box
+        xSignalSize = 20    # width of the signal box
+        xIconOff = 10
+
+        count = max(len(inputs), len(outputs))
+        height = max ((count)*ySignalSpace, 70)
+
+
+        # calculate needed sizes of boxes to show text
+        maxLeft = 0
+        for i in range(len(inputs)):
+            maxLeft = max(maxLeft, self.getTextWidth("("+inputs[i].name+")", 1))
+            maxLeft = max(maxLeft, self.getTextWidth(inputs[i].type))
+
+        maxRight = 0
+        for i in range(len(outputs)):
+            maxRight = max(maxRight, self.getTextWidth("("+outputs[i].name+")", 1))
+            maxRight = max(maxRight, self.getTextWidth(outputs[i].type))
+
+        width = max(maxLeft, maxRight) + 70 # we add 70 to show icons beside signal names
+
+        # show boxes
+        brush = QBrush(QColor(60,150,255))
+        self.outWidget = QCanvasRectangle(xWidgetOff, yWidgetOffTop, width, height, self.dlg.canvas)
+        self.outWidget.setBrush(brush)
+        self.outWidget.setZ(-100)
+        self.outWidget.show()
+
+        self.inWidget = QCanvasRectangle(xWidgetOff + width + xSpaceBetweenWidgets, yWidgetOffTop, width, height, self.dlg.canvas)
+        self.inWidget.setBrush(brush)
+        self.inWidget.setZ(-100)
+        self.inWidget.show()
+
+        # if icons -> show them
+        if outIconName:
+            self.outWidgetIcon = QCanvasIcon(self.dlg.canvas, outIconName)
+            self.outWidgetIcon.setCenterPos(xWidgetOff + xIconOff + self.outWidgetIcon.pixmap.width()/2.0, yWidgetOffTop + height/2.0)
+            self.outWidgetIcon.show()
+        if inIconName :
+            self.inWidgetIcon = QCanvasIcon(self.dlg.canvas, inIconName)
+            self.inWidgetIcon.setCenterPos(xWidgetOff + xSpaceBetweenWidgets + 2*width - xIconOff - self.inWidgetIcon.pixmap.width()/2.0, yWidgetOffTop + height/2.0)
+            self.inWidgetIcon.show()
+
+        # show signal boxes and text labels
+        #signalSpace = (count)*ySignalSpace
+        signalSpace = height
+        for i in range(len(outputs)):
+            y = yWidgetOffTop + ((i+1)*signalSpace)/float(len(outputs)+1)
+            box = QCanvasRectangle(xWidgetOff + width, y - ySignalSize/2.0, xSignalSize, ySignalSize, self.dlg.canvas)
+            box.setBrush(QBrush(QColor(0,0,255)))
+            box.show()
+            self.outBoxes.append((outputs[i].name, box))
+
+            self.texts.append(MyCanvasText(self.dlg.canvas, outputs[i].name, xWidgetOff + width - 5, y - 7, Qt.AlignRight + Qt.AlignVCenter, bold =1, show=1))
+            self.texts.append(MyCanvasText(self.dlg.canvas, outputs[i].type, xWidgetOff + width - 5, y + 7, Qt.AlignRight + Qt.AlignVCenter, bold =0, show=1))
+
+        for i in range(len(inputs)):
+            y = yWidgetOffTop + ((i+1)*signalSpace)/float(len(inputs)+1)
+            box = QCanvasRectangle(xWidgetOff + width + xSpaceBetweenWidgets - xSignalSize, y - ySignalSize/2.0, xSignalSize, ySignalSize, self.dlg.canvas)
+            box.setBrush(QBrush(QColor(0,0,255)))
+            box.show()
+            self.inBoxes.append((inputs[i].name, box))
+
+            self.texts.append(MyCanvasText(self.dlg.canvas, inputs[i].name, xWidgetOff + width + xSpaceBetweenWidgets + 5, y - 7, Qt.AlignLeft + Qt.AlignVCenter, bold =1, show=1))
+            self.texts.append(MyCanvasText(self.dlg.canvas, inputs[i].type, xWidgetOff + width + xSpaceBetweenWidgets + 5, y + 7, Qt.AlignLeft + Qt.AlignVCenter, bold =0, show=1))
+
+        self.texts.append(MyCanvasText(self.dlg.canvas, outName, xWidgetOff + width/2.0, yWidgetOffTop + height + 5, Qt.AlignHCenter + Qt.AlignTop, bold =1, show=1))
+        self.texts.append(MyCanvasText(self.dlg.canvas, inName, xWidgetOff + width* 1.5 + xSpaceBetweenWidgets, yWidgetOffTop + height + 5, Qt.AlignHCenter + Qt.AlignTop, bold =1, show=1))
+
+        return (2*xWidgetOff + 2*width + xSpaceBetweenWidgets, yWidgetOffTop + height + yWidgetOffBottom)
+
+    def getTextWidth(self, text, bold = 0):
+        temp = QCanvasText(text, self.dlg.canvas)
+        if bold:
+            font = temp.font()
+            font.setBold(1)
+            temp.setFont(font)
+        rect = temp.boundingRect()
+        return rect.width()
+
+    # ###################################################################
+    # mouse button was pressed
+    def contentsMousePressEvent(self, ev):
+        self.bMouseDown = 1
+        activeItems = self.canvas().collisions(QRect(ev.pos().x()-1, ev.pos().y()-1,2,2))
+
+        if activeItems == []: return
+        box = self.findItem(activeItems, QCanvasRectangle)
+        if box and box != self.outWidget and box != self.inWidget:
+            self.bLineDragging = 1
+            self.tempLine = QCanvasLine(self.dlg.canvas)
+            self.tempLine.setPoints(ev.pos().x(), ev.pos().y(), ev.pos().x(), ev.pos().y())
+            self.tempLine.setPen(QPen(QColor(0,255,0), 1))
+            self.tempLine.setZ(-120)
+            self.tempLine.show()
+            return
+
+        line = self.findItem(activeItems, QCanvasLine)
+        if line:
+            for (Line, outName, inName, outBox, inBox) in self.lines:
+                if Line == line:
+                    self.dlg.removeLink(outName, inName)
+                    return
+
+    # ###################################################################
+    # mouse button was released #########################################
+    def contentsMouseMoveEvent(self, ev):
+        if self.bLineDragging:
+            start = self.tempLine.startPoint()
+            self.tempLine.setPoints(start.x(), start.y(), ev.pos().x(), ev.pos().y())
+            self.canvas().update()
+
+    # ###################################################################
+    # mouse button was released #########################################
+    def contentsMouseReleaseEvent(self, ev):
+        if self.bLineDragging:
+            self.bLineDragging = 0
+            activeItems = self.canvas().collisions(QRect(ev.pos().x()-1, ev.pos().y()-1,2,2))
+
+            box = self.findItem(activeItems, QCanvasRectangle)
+            if box:
+                startItems = self.canvas().collisions(QRect(self.tempLine.startPoint().x()-1, self.tempLine.startPoint().y()-1,2,2))
+                box2 = self.findItem(startItems, QCanvasRectangle)
+                if box.x() < box2.x(): outBox = box; inBox = box2
+                else:                  outBox = box2; inBox = box
+                outName = None; inName = None
+                for (name, box) in self.outBoxes:
+                    if box == outBox: outName = name
+                for (name, box) in self.inBoxes:
+                    if box == inBox: inName = name
+                if outName != None and inName != None: self.dlg.addLink(outName, inName)
+
+            self.tempLine.hide()
+            self.tempLine.setCanvas(None)
+            self.canvas().update()
+
+
+    def findItem(self, items, wantedType):
+        for item in items:
+            if isinstance(item, wantedType): return item
+        return None
+
+    def addLink(self, outName, inName):
+        outBox = None; inBox = None
+        for (name, box) in self.outBoxes:
+            if name == outName: outBox = box
+        for (name, box) in self.inBoxes:
+            if name == inName : inBox  = box
+        if outBox == None or inBox == None:
+            print "error adding link. Data = ", outName, inName
+            return
+        line = QCanvasLine(self.dlg.canvas)
+        line.setPoints(outBox.x() + outBox.width()-2, outBox.y() + outBox.height()/2.0, inBox.x()+2, inBox.y() + inBox.height()/2.0)
+        line.setPen(QPen(QColor(0,255,0), 6))
+        line.setZ(-120)
+        line.show()
+        self.canvas().update()
+        self.lines.append((line, outName, inName, outBox, inBox))
+
+
+    def removeLink(self, outName, inName):
+        for (line, outN, inN, outBox, inBox) in self.lines:
+            if outN == outName and inN == inName:
+                line.hide()
+                line.setCanvas(None)
+                self.lines.remove((line, outN, inN, outBox, inBox))
+                self.canvas().update()
+                return
+
+
+# #######################################
+# # Signal dialog - let the user select active signals between two widgets
+# #######################################
+class SignalDialog(QDialog):
+    def __init__(self, canvasDlg, *args):
+        apply(QDialog.__init__,(self,) + args)
+        self.canvasDlg = canvasDlg
+        self.topLayout = QVBoxLayout( self, 10 )
+        self.signals = []
+        self._links = []
+        self.allSignalsTaken = 0
+
+        # GUI
+        self.resize(515,286)
+        if (int(qVersion()[0]) >= 3):
+            self.setName('Connect Signals')
+            self.setCaption(self.tr("Connect Signals"))
+        else:
+            self.setName('Qt Connect Signals')
+            self.setCaption(self.tr("Qt Connect Signals"))
+
+        self.grid = QGridLayout( 2, 1 )
+        self.topLayout.addLayout( self.grid, 10 )
+
+        self.canvasGroup = QHGroupBox("", self)
+        self.canvas = QCanvas(1000,1000)
+        self.canvasView = SignalCanvasView(self, self.canvas, self.canvasGroup)
+        self.grid.addWidget(self.canvasGroup, 1,1)
+
+
+        LayoutWidget = QWidget(self,'Layout1')
+        LayoutWidget.setGeometry(QRect(20,240,476,33))
+        self.grid.addWidget(LayoutWidget, 2,1)
+        Layout1 = QHBoxLayout(LayoutWidget)
+        Layout1.setSpacing(6)
+        Layout1.setMargin(0)
+
+        #self.buttonHelp = QPushButton("&Help", LayoutWidget)
+        #self.buttonHelp.setAutoDefault(1)
+        #Layout1.addWidget(self.buttonHelp)
+
+        self.buttonClearAll = QPushButton("Clear &All", LayoutWidget)
+        Layout1.addWidget(self.buttonClearAll)
+
+        spacer = QSpacerItem(20,20,QSizePolicy.Expanding,QSizePolicy.Minimum)
+        Layout1.addItem(spacer)
+
+        self.buttonOk = QPushButton("&OK", LayoutWidget)
+        self.buttonOk.setAutoDefault(1)
+        self.buttonOk.setDefault(1)
+        Layout1.addWidget(self.buttonOk)
+
+        self.buttonCancel = QPushButton("&Cancel", LayoutWidget)
+        self.buttonCancel.setAutoDefault(1)
+        Layout1.addWidget(self.buttonCancel)
+
+        self.connect(self.buttonClearAll,SIGNAL('clicked()'),self.clearAll)
+        self.connect(self.buttonOk,SIGNAL('clicked()'),self,SLOT('accept()'))
+        self.connect(self.buttonCancel,SIGNAL('clicked()'),self,SLOT('reject()'))
+
+    def clearAll(self):
+        while self._links != []:
+            self.removeLink(self._links[0][0], self._links[0][1])
+
+    def setOutInWidgets(self, outWidget, inWidget):
+        self.outWidget = outWidget
+        self.inWidget = inWidget
+        (width, height) = self.canvasView.addSignalList(outWidget.caption, inWidget.caption, outWidget.widget.getOutputs(), inWidget.widget.getInputs(), outWidget.widget.getFullIconName(), inWidget.widget.getFullIconName())
+        self.canvas.resize(width, height)
+        self.resize(width+55, height+90)
+
+    def countCompatibleConnections(self, outputs, inputs, outInstance, inInstance, outType, inType):
+        count = 0
+        for outS in outputs:
+            if outInstance.getOutputType(outS.name) == None: continue  # ignore if some signals don't exist any more, since we will dispatch refresh registry somwhere else
+            if not issubclass(outInstance.getOutputType(outS.name), outType): continue
+            for inS in inputs:
+                if inInstance.getOutputType(inS.name) == None: continue  # ignore if some signals don't exist any more, since we will dispatch refresh registry somwhere else
+                if not issubclass(inType, inInstance.getInputType(inS.name)): continue
+                if issubclass(outInstance.getOutputType(outS.name), inInstance.getInputType(inS.name)): count+= 1
+
+        return count
+
+    def existsABetterLink(self, outSignal, inSignal, outSignals, inSignals):
+        existsBetter = 0
+
+        betterOutSignal = None; betterInSignal = None
+        for outS in outSignals:
+            for inS in inSignals:
+                if (outS.name != outSignal.name and outS.name == inSignal.name and outS.type == inSignal.type) or (inS.name != inSignal.name and inS.name == outSignal.name and inS.type == outSignal.type):
+                    existsBetter = 1
+                    betterOutSignal = outS
+                    betterInSignal = inS
+
+        return existsBetter, betterOutSignal, betterInSignal
+
+
+    def getPossibleConnections(self, outputs, inputs):
+        possibleLinks = []
+        for outS in outputs:
+            outType = self.outWidget.instance.getOutputType(outS.name)
+            if outType == None:     #print "Unable to find signal type for signal %s. Check the definition of the widget." % (outS.name)
+                continue
+            for inS in inputs:
+                inType = self.inWidget.instance.getInputType(inS.name)
+                if inType == None:
+                    continue        #print "Unable to find signal type for signal %s. Check the definition of the widget." % (inS.name)
+                if issubclass(outType, inType):
+                    possibleLinks.append((outS.name, inS.name))
+        return possibleLinks
+
+    def addDefaultLinks(self):
+        canConnect = 0
+        addedInLinks = []
+        addedOutLinks = []
+        self.multiplePossibleConnections = 0    # can we connect some signal with more than one widget
+
+        minorInputs = self.inWidget.widget.getMinorInputs()
+        minorOutputs = self.outWidget.widget.getMinorOutputs()
+        majorInputs = self.inWidget.widget.getMajorInputs()
+        majorOutputs = self.outWidget.widget.getMajorOutputs()
+
+        inConnected = self.inWidget.getInConnectedSignalNames()
+        outConnected = self.outWidget.getOutConnectedSignalNames()
+
+        # input connections that can be simultaneously connected to multiple outputs are not to be considered as already connected
+        for i in inConnected[::-1]:
+            if not self.inWidget.instance.signalIsOnlySingleConnection(i):
+                inConnected.remove(i)
+
+        # rebuild registry if necessary
+        for s in majorInputs + minorInputs:
+            if not self.inWidget.instance.hasInputName(s.name):
+                return -1
+        for s in majorOutputs + minorOutputs:
+            if not self.outWidget.instance.hasOutputName(s.name):
+                return -1
+
+        pl1 = self.getPossibleConnections(majorOutputs, majorInputs)
+        pl2 = self.getPossibleConnections(majorOutputs, minorInputs)
+        pl3 = self.getPossibleConnections(minorOutputs, majorInputs)
+        pl4 = self.getPossibleConnections(minorOutputs, minorInputs)
+
+        all = pl1 + pl2 + pl3 + pl4
+
+        if not all: return 0
+
+        # try to find a link to any inputs that hasn't been previously connected
+        self.allSignalsTaken = 1
+        for (o,i) in all:
+            if i not in inConnected:
+                all.remove((o,i))
+                all.insert(0, (o,i))
+                self.allSignalsTaken = 0       # we found an unconnected link. no need to show the signal dialog
+                break
+        self.addLink(all[0][0], all[0][1])  # add only the best link
+
+        # there are multiple possible connections if we have in the same priority class more than one possible unconnected link
+        for pl in [pl1, pl2, pl3, pl4]:
+            #if len(pl) > 1 and sum([i not in inConnected for (o,i) in pl]) > 1: # if we have more than one valid
+            if len(pl) > 1:     # if we have more than one valid
+                self.multiplePossibleConnections = 1
+            if len(pl) > 0:     # when we find a first non-empty list we stop searching
+                break
+        return len(all) > 0
+
+    def addLink(self, outName, inName):
+        if (outName, inName) in self._links: return 1
+
+        # check if correct types
+        outType = self.outWidget.instance.getOutputType(outName)
+        inType = self.inWidget.instance.getInputType(inName)
+        if not issubclass(outType, inType): return 0
+
+        inSignal = None
+        inputs = self.inWidget.widget.getInputs()
+        for i in range(len(inputs)):
+            if inputs[i].name == inName: inSignal = inputs[i]
+
+        # if inName is a single signal and connection already exists -> delete it
+        for (outN, inN) in self._links:
+            if inN == inName and inSignal.single:
+                self.removeLink(outN, inN)
+
+        self._links.append((outName, inName))
+        self.canvasView.addLink(outName, inName)
+        return 1
+
+
+    def removeLink(self, outName, inName):
+        if (outName, inName) in self._links:
+            self._links.remove((outName, inName))
+            self.canvasView.removeLink(outName, inName)
+
+    def getLinks(self):
+        return self._links
+
+
+class ColorIcon(QPushButton):
+    def __init__(self, parent, color):
+        QPushButton.__init__(self, parent, "")
+        self.color = color
+        self.parent = parent
+        self.setMaximumSize(20,20)
+        self.connect(self, SIGNAL("clicked()"), self.showColorDialog)
+
+    def drawButtonLabel(self, painter):
+        painter.setBrush(QBrush(self.color))
+        painter.setPen(QPen(self.color))
+        painter.drawRect(3, 3, self.width()-6, self.height()-6)
+
+    def showColorDialog(self):
+        color = QColorDialog.getColor(self.color, self.parent)
+        if color.isValid():
+            self.color = color
+            self.repaint()
+
+# canvas dialog
+class CanvasOptionsDlg(QDialog):
+    def __init__(self, canvasDlg, *args):
+        apply(QDialog.__init__,(self,) + args)
+        self.canvasDlg = canvasDlg
+        if (int(qVersion()[0]) >= 3):
+            if sys.platform == "darwin":
+                self.setCaption("Preferences")
+            else:
+                self.setCaption("Canvas Options")
+        else:
+            if sys.platform == "darwin":
+                self.setCaption("Qt Preferences")
+            else:
+                self.setCaption("Qt Canvas Options")
+        #self.controlArea = QVBoxLayout (self)
+        self.topLayout = QVBoxLayout( self, 10 )
+        self.resize(500,450)
+
+        self.tabs = QTabWidget(self, 'tabWidget')
+        GeneralTab = QVGroupBox(self.tabs)
+        ExceptionsTab = QVGroupBox(self.tabs)
+        TabOrderTab = QVGroupBox(self.tabs)
+        self.tabs.insertTab(GeneralTab, "General")
+        self.tabs.insertTab(ExceptionsTab, "Output Handling")
+        self.tabs.insertTab(TabOrderTab, "Widget Tab Order")
+
+        # #################################################################
+        # GENERAL TAB
+        generalBox = QVGroupBox(GeneralTab)
+        generalBox.setTitle("General Options")
+        self.snapToGridCB = QCheckBox("Snap widgets to grid", generalBox)
+        self.useLargeIconsCB = QCheckBox("Show widgets using large icons and text", generalBox)
+        self.writeLogFileCB  = QCheckBox("Write content of Output window to log file", generalBox)
+        self.showSignalNamesCB = QCheckBox("Show signal names between widgets", generalBox)
+        self.dontAskBeforeCloseCB= QCheckBox("Don't ask to save schema before closing", generalBox)
+        #self.autoSaveSchemasOnCloseCB = QCheckBox("Automatically save temporary schemas on close", generalBox)
+        self.saveWidgetsPositionCB = QCheckBox("Save size and position of widgets", generalBox)
+        self.useContextsCB = QCheckBox("Use context settings", generalBox)
+##        hb = QHBox(generalBox)
+##        sep = QWidget(hb)
+##        sep.setFixedWidth(30)
+##        self.autoLoadSchemasOnStartCB = QCheckBox("Automatically reload last schema", hb)
+
+        validator = QIntValidator(self)
+        validator.setRange(0,10000)
+
+        canvasSizeBox = QVGroupBox(GeneralTab)
+        canvasSizeBox.setTitle("Default Size of Orange Canvas")
+        widthBox = QHBox(canvasSizeBox)
+        widthLabel = QLabel("Width:  ", widthBox)
+        self.widthEdit = QLineEdit(widthBox)
+        self.widthEdit.setValidator(validator)
+
+        heightBox = QHBox(canvasSizeBox)
+        heightLabel = QLabel("Height: ", heightBox)
+        self.heightEdit = QLineEdit(heightBox)
+        self.heightEdit.setValidator(validator)
+
+        colorsBox = QVGroupBox(GeneralTab)
+        colorsBox.setTitle("Set Colors For...")
+
+        selectedWidgetBox = QHBox(colorsBox)
+        self.selectedWidgetIcon = ColorIcon(selectedWidgetBox, canvasDlg.widgetSelectedColor)
+        selectedWidgetLabel = QLabel(" Selected widget", selectedWidgetBox)
+
+        activeWidgetBox = QHBox(colorsBox)
+        self.activeWidgetIcon = ColorIcon(activeWidgetBox, canvasDlg.widgetActiveColor)
+        activeWidgetLabel = QLabel(" Active widget", activeWidgetBox)
+
+        lineBox = QHBox(colorsBox)
+        self.lineIcon = ColorIcon(lineBox, canvasDlg.lineColor)
+        lineLabel = QLabel(" Lines", lineBox)
+
+
+        # #################################################################
+        # EXCEPTION TAB
+        exceptions = QVGroupBox("Exceptions", ExceptionsTab)
+        #self.catchExceptionCB = QCheckBox('Catch exceptions', exceptions)
+        self.focusOnCatchExceptionCB = QCheckBox('Focus output window on catch', exceptions)
+        self.printExceptionInStatusBarCB = QCheckBox('Print last exception in status bar', exceptions)
+
+        output = QVGroupBox("System output", ExceptionsTab)
+        #self.catchOutputCB = QCheckBox('Catch system output', output)
+        self.focusOnCatchOutputCB = QCheckBox('Focus output window on system output', output)
+        self.printOutputInStatusBarCB = QCheckBox('Print last system output in status bar', output)
+
+        hbox = QHBox(ExceptionsTab)
+        hbox.layout().setSpacing(5)
+        outputCanvas = QVGroupBox("Canvas Info Handling", hbox)
+        outputWidgets = QVGroupBox("Widget Info Handling", hbox)
+        self.ocShow = QCheckBox('Show icon above widget for...', outputCanvas)
+        self.ocInfo = indentedCheckBox('Information', outputCanvas)
+        self.ocWarning = indentedCheckBox('Warnings', outputCanvas)
+        self.ocError = indentedCheckBox('Errors', outputCanvas)
+
+        self.owShow = QCheckBox('Show statusbar info for...', outputWidgets)
+        self.owInfo = indentedCheckBox('Information', outputWidgets)
+        self.owWarning = indentedCheckBox('Warnings', outputWidgets)
+        self.owError = indentedCheckBox('Errors', outputWidgets)
+
+        verbosity = QHGroupBox("Verbosity", ExceptionsTab)
+        QLabel("Set level of widget output: ", verbosity)
+        self.verbosityCombo = QComboBox(verbosity)
+        self.verbosityCombo.insertItem("Small")
+        self.verbosityCombo.insertItem("Medium")
+        self.verbosityCombo.insertItem("High")
+
+        # #################################################################
+        # WIDGET TAB ORDER
+        caption = QLabel("Set order of widget categories", TabOrderTab)
+        hbox1 = QHBox(TabOrderTab)
+        hbox1.layout().setSpacing(5)
+        self.tabOrderList = QListBox(hbox1)
+        self.tabOrderList.setSelectionMode(QListBox.Single)
+        hbox2 = QVBox(hbox1)
+        hbox2.layout().setSpacing(5)
+        self.upButton = QPushButton("Up", hbox2)
+        self.downButton = QPushButton("Down", hbox2)
+        self.removeButton = QPushButton("Remove", hbox2)
+        self.upButton.setMaximumWidth(60)
+        self.downButton.setMaximumWidth(60)
+        self.removeButton.setMaximumWidth(60)
+        self.removeButton.setEnabled(0)
+        sep = QWidget(hbox2)
+        sep.setSizePolicy(QSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred))
+        self.connect(self.upButton, SIGNAL("clicked()"), self.moveUp)
+        self.connect(self.downButton, SIGNAL("clicked()"), self.moveDown)
+        self.connect(self.removeButton, SIGNAL("clicked()"), self.removeCategory)
+        self.connect(self.tabOrderList, SIGNAL("highlighted(int)"), self.enableDisableButtons)
+
+        # OK, Cancel buttons
+
+        hbox = QHBox(self)
+        if hbox.layout():
+            hbox.layout().setSpacing(6)
+            hbox.layout().setMargin(0)
+        sep = QWidget(hbox)
+        sep.setSizePolicy(QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed))
+
+        self.okButton = QPushButton("OK", hbox)
+        self.cancelButton = QPushButton("Cancel", hbox)
+
+        self.topLayout.addWidget(self.tabs)
+        self.topLayout.addWidget(hbox)
+
+        self.connect(self.okButton, SIGNAL("clicked()"), self.accept)
+        self.connect(self.cancelButton, SIGNAL("clicked()"), self.reject)
+
+    # move selected widget category up
+    def moveUp(self):
+        for i in range(1, self.tabOrderList.count()):
+            if self.tabOrderList.isSelected(i):
+                text = self.tabOrderList.text(i)
+                self.tabOrderList.removeItem(i)
+                self.tabOrderList.insertItem(text, i-1)
+                self.tabOrderList.setSelected(i-1, True)
+
+    # move selected widget category down
+    def moveDown(self):
+        for i in range(self.tabOrderList.count()-2,-1,-1):
+            if self.tabOrderList.isSelected(i):
+                text = self.tabOrderList.text(i)
+                self.tabOrderList.removeItem(i)
+                self.tabOrderList.insertItem(text, i+1)
+                self.tabOrderList.setSelected(i+1, True)
+
+    def enableDisableButtons(self, *i):
+        itemIndex = self.tabOrderList.currentItem()
+        self.upButton.setEnabled(itemIndex > 0)
+        self.downButton.setEnabled(itemIndex < self.tabOrderList.count()-1)
+        self.removeButton.setEnabled(not self.tabs.tabDict[str(self.tabOrderList.currentText())].builtIn)
+
+    def removeCategory(self):
+        curCat = str(self.tabOrderList.currentText())
+        if QMessageBox.warning(self,'Orange Canvas', "Unregister widget category '%s' from Orange canvas?\nThis will not remove any files." % curCat, QMessageBox.Yes, QMessageBox.No | QMessageBox.Default | QMessageBox.Escape) == QMessageBox.Yes:
+            self.removeTabs.append(curCat)
+            self.tabOrderList.removeItem(self.tabOrderList.currentItem())
+
+
+##########
+### Widget registry editor
+####
+
+class KeyEdit(QLineEdit):
+    def __init__(self, parent, key, invdict, widget, invInvDict):
+        QLineEdit.__init__(self, parent)
+        self.setText(key)
+        #self.setReadOnly(True)
+        self.invdict = invdict
+        self.widget = widget
+        self.invInvDict = invInvDict
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Delete or e.key() == Qt.Key_Backspace:
+            pressed = "<none>"
+            self.setText(pressed)
+            prevkey = self.invdict.get(self.widget)
+            if prevkey:
+                del self.invdict[self.widget]
+                del self.invInvDict[prevkey]
+            return
+
+        if e.key() not in range(32, 128): # + range(Qt.Key_F1, Qt.Key_F35+1): -- this wouldn't work, see the line below, and also writing to file etc.
+            e.ignore()
+            return
+
+        pressed = "-".join(filter(None, [e.state() & x and y for x, y in [(e.ControlButton, "Ctrl"), (e.AltButton, "Alt")]]) + [chr(e.key())])
+
+        assigned = self.invInvDict.get(pressed, None)
+        if assigned == self:
+            return
+
+        if assigned:
+            dlg = QMessageBox("Confirmation", "'%(pressed)s' is already assigned to '%(assigned)s'. Override?" % {"pressed": pressed, "assigned": assigned.widget.nameKey},
+                              QMessageBox.Warning, QMessageBox.Yes | QMessageBox.Default, QMessageBox.No | QMessageBox.Escape, 0)
+            dlg.exec_loop()
+            if dlg.result() == QMessageBox.No:
+                return
+
+        self.setText(pressed)
+        self.invdict[self.widget] = pressed
+        self.invInvDict[pressed] = self
+        if assigned:
+            assigned.setText("<none>")
+            del self.invdict[assigned.widget]
+
+
+class WidgetRegistryDlg(QDialog):
+    def __init__(self, canvasDlg, *args):
+        import orngTabs
+
+        apply(QDialog.__init__,(self,) + args)
+        self.canvasDlg = canvasDlg
+        if (int(qVersion()[0]) >= 3):
+            self.setCaption("Widget Shortcuts")
+        else:
+            self.setCaption("Qt Widget Shortcuts")
+        self.topLayout = QVBoxLayout( self, 10 )
+        self.resize(500,500)
+
+        self.invDict = dict([(y, x) for x, y in canvasDlg.widgetShortcuts.items()])
+        invInvDict = {}
+
+        self.tabs = QTabWidget(self, 'tabWidget')
+        for tab in canvasDlg.tabs.tabs:
+            wtab = QWidget(self.tabs)
+            self.tabs.insertTab(wtab, canvasDlg.tabs.tabLabel(tab))
+
+            widgets = filter(lambda x:x.__class__ == orngTabs.WidgetButton, tab.widgets)
+            rows = (len(widgets)+2) / 3
+            layout = QGridLayout(wtab, 2*rows+2, 9, 10)
+
+            for i in range(2, 9, 3):
+                layout.addColSpacing(i, 20)
+            for i in range(0, 2*rows, 2):
+                layout.addRowSpacing(i, 20)
+
+            for i, w in enumerate(widgets):
+                y, x = 1 + 2 * (i % rows), 3 * (i/rows)
+                pixmap = w.iconSet().pixmap(QIconSet.Large, QIconSet.Normal)
+                label = QLabel(wtab)
+                label.setPixmap(pixmap)
+                layout.addWidget(label, y, x)
+
+                optionsw = QVBox(wtab)
+                layout.addWidget(optionsw, y, x+1, Qt.AlignLeft + Qt.AlignVCenter)
+
+                QLabel(w.name, optionsw)
+                QWidget(optionsw).setFixedHeight(8)
+                shb = QHBox(optionsw)
+                #QLabel("Shortcut: ", shb)
+                key = self.invDict.get(w, "<none>")
+                le = KeyEdit(shb, key, self.invDict, w, invInvDict)
+                invInvDict[key] = le
+                le.setFixedWidth(60)
+                sep = QWidget(shb)
+                sep.setSizePolicy(QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding))
+
+            sep = QWidget(wtab)
+            sep.setSizePolicy(QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding))
+            layout.addMultiCellWidget(sep, 2*rows+1, 2*rows+1, 0, 8)
+
+        # OK, Cancel buttons
+        hbox = QHBox(self)
+        if hbox.layout():
+            hbox.layout().setSpacing(6)
+            hbox.layout().setMargin(0)
+
+        sep = QWidget(hbox)
+        sep.setSizePolicy(QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding))
+
+        self.okButton = QPushButton("OK", hbox)
+        self.okButton.setFixedWidth(110)
+        self.okButton.setDefault(True)
+        self.cancelButton = QPushButton("Cancel", hbox)
+        self.cancelButton.setFixedWidth(110)
+
+        self.topLayout.addWidget(self.tabs)
+        self.topLayout.addWidget(hbox)
+
+        self.connect(self.okButton, SIGNAL("clicked()"), self.accept)
+        self.connect(self.cancelButton, SIGNAL("clicked()"), self.reject)
+
+
+# #######################################
+# # Preferences dialog - preferences for signals
+# #######################################
+class PreferencesDlg(QDialog):
+    def __init__(self, canvasDlg, *args):
+        apply(QDialog.__init__,(self,) + args)
+        self.canvasDlg = canvasDlg
+        self.topLayout = QVBoxLayout( self, 10 )
+        self.grid = QGridLayout( 5, 3 )
+        self.topLayout.addLayout( self.grid, 10 )
+
+        groupBox  = QGroupBox(self, "Channel_settings")
+        groupBox.setTitle("Channel settings")
+        self.grid.addWidget(groupBox, 1,1)
+        topLayout2 = QVBoxLayout(groupBox, 10 )
+        propGrid = QGridLayout(groupBox, 4, 2 )
+        topLayout2.addLayout(propGrid, 10)
+
+        cap0 = QLabel("Symbolic channel names:", self)
+        cap1 = QLabel("Full name:", groupBox)
+        cap2 = QLabel("Priority:", groupBox)
+        cap3 = QLabel("Color:", groupBox)
+        self.editFullName = QLineEdit(groupBox)
+        self.editPriority = QComboBox( False, groupBox, "priority" )
+        self.editColor    = QComboBox( False, groupBox, "color" )
+        #self.connect( self.editPriority, SIGNAL("activated(int)"), self.comboValueChanged )
+        #self.connect( self.editColor, SIGNAL("activated(int)"), self.comboValueChanged )
+
+        propGrid.addWidget(cap1, 0,0, Qt.AlignVCenter+Qt.AlignHCenter)
+        propGrid.addWidget(cap2, 1,0, Qt.AlignVCenter+Qt.AlignHCenter)
+        propGrid.addWidget(cap3, 2,0, Qt.AlignVCenter+Qt.AlignHCenter)
+        propGrid.addWidget(self.editFullName, 0,1, Qt.AlignVCenter)
+        propGrid.addWidget(self.editPriority, 1,1, Qt.AlignVCenter)
+        propGrid.addWidget(self.editColor, 2,1, Qt.AlignVCenter)
+
+        groupBox.setMinimumSize(180,150)
+        groupBox.setMaximumSize(180,150)
+
+        saveButton = QPushButton("Save Changes", groupBox)
+        addButton = QPushButton("Add New Channel Name", self)
+        removeButton = QPushButton("Remove Selected Name", self)
+        closeButton = QPushButton("Close",self)
+        self.channelList = QListBox( self, "channels" )
+        self.channelList.setMinimumHeight(200)
+        self.connect( self.channelList, SIGNAL("highlighted(int)"), self.listItemChanged )
+
+        self.grid.addWidget(cap0,0,0, Qt.AlignLeft+Qt.AlignBottom)
+        self.grid.addWidget(addButton, 2,1)
+        self.grid.addWidget(removeButton, 3,1)
+        self.grid.addMultiCellWidget(self.channelList, 1,5,0,0)
+        self.grid.addWidget(closeButton, 4,1)
+        propGrid.addMultiCellWidget(saveButton, 3,3,0,1)
+
+        saveButton.show()
+        addButton.show()
+        removeButton.show()
+        self.channelList.show()
+        closeButton.show()
+        self.connect(saveButton, SIGNAL("clicked()"),self.saveChanges)
+        self.connect(addButton , SIGNAL("clicked()"),self.addNewSignal)
+        self.connect(removeButton, SIGNAL("clicked()"),self.removeSignal)
+        self.connect(closeButton, SIGNAL("clicked()"),self.closeClicked)
+        self.topLayout.activate()
+
+        self.editColor.insertItem( "black" )
+        self.editColor.insertItem( "darkGray" )
+        self.editColor.insertItem( "gray" )
+        self.editColor.insertItem( "lightGray" )
+        self.editColor.insertItem( "red" )
+        self.editColor.insertItem( "green" )
+        self.editColor.insertItem( "blue" )
+        self.editColor.insertItem( "cyan" )
+        self.editColor.insertItem( "magenta" )
+        self.editColor.insertItem( "yellow" )
+        self.editColor.insertItem( "darkRed" )
+        self.editColor.insertItem( "darkGreen" )
+        self.editColor.insertItem( "darkBlue" )
+        self.editColor.insertItem( "darkCyan" )
+        self.editColor.insertItem( "darkMagenta" )
+        self.editColor.insertItem( "darkYellow" )
+
+        for i in range(20):
+            self.editPriority.insertItem(str(i+1))
+
+        self.channels = {}
+        if self.canvasDlg.settings.has_key("Channels"):
+            self.channels = self.canvasDlg.settings["Channels"]
+
+        self.reloadList()
+
+    def listItemChanged(self, index):
+        name = str(self.channelList.text(index))
+        value = self.channels[name]
+        items = value.split("::")
+        self.editFullName.setText(items[0])
+
+        for i in range(self.editPriority.count()):
+            if (str(self.editPriority.text(i)) == items[1]):
+                self.editPriority.setCurrentItem(i)
+
+        for i in range(self.editColor.count()):
+            if (str(self.editColor.text(i)) == items[2]):
+                self.editColor.setCurrentItem(i)
+
+    def reloadList(self):
+        self.channelList.clear()
+        for (key,value) in self.channels.items():
+            self.channelList.insertItem(key)
+
+    def saveChanges(self):
+        index = self.channelList.currentItem()
+        if index != -1:
+            name = str(self.channelList.text(index))
+            self.channels[name] = str(self.editFullName.text()) + "::" + str(self.editPriority.currentText()) + "::" + str(self.editColor.currentText())
+
+    def addNewSignal(self):
+        if (int(qVersion()[0]) >= 3):
+            (Qstring,ok) = QInputDialog.getText("Add New Channel Name", "Enter new symbolic channel name")
+        else:
+            (Qstring,ok) = QInputDialog.getText("Qt Add New Channel Name", "Enter new symbolic channel name")
+        string = str(Qstring)
+        if ok:
+            self.editColor.setCurrentItem(0)
+            self.editPriority.setCurrentItem(0)
+            self.editFullName.setText(string)
+            self.channels[string] = str(self.editFullName.text()) + "::" + str(self.editPriority.currentText()) + "::" + str(self.editColor.currentText())
+            self.reloadList()
+            self.selectItem(string)
+
+    def selectItem(self, string):
+        for i in range(self.channelList.count()):
+            temp = str(self.channelList.text(i))
+            if temp == string:
+                self.channelList.setCurrentItem(i)
+                return
+
+    def removeSignal(self):
+        index = self.channelList.currentItem()
+        if index != -1:
+            tempDict = {}
+            symbName = str(self.channelList.text(index))
+
+            for key in self.channels.keys():
+                if key != symbName:
+                    tempDict[key] = self.channels[key]
+            self.channels = copy(tempDict)
+
+        self.reloadList()
+
+    def closeClicked(self):
+        self.canvasDlg.settings["Channels"] = self.channels
+        self.accept()
+        return
+
+
+class saveApplicationDlg(QDialog):
+    def __init__(self, *args):
+        apply(QDialog.__init__,(self,) + args)
+        if (int(qVersion()[0]) >= 3):
+            self.setCaption("Set Widget Order")
+        else:
+            self.setCaption("Qt Set Widget Order")
+        self.shownWidgetList = []
+        self.hiddenWidgetList = []
+
+        self.topLayout = QVBoxLayout( self, 10 )
+
+        self.grid = QGridLayout( 2, 1 )
+        self.topLayout.addLayout( self.grid, 10 )
+
+        self.tab = QTable(self)
+        self.tab.setSelectionMode(QTable.Single )
+        self.tab.setRowMovingEnabled(1)
+        self.grid.addWidget(self.tab, 1,1)
+
+        self.tab.setNumCols(2)
+        self.tabHH = self.tab.horizontalHeader()
+        self.tabHH.setLabel(0, 'Show')
+        self.tabHH.setLabel(1, 'Widget Name')
+        self.tabHH.resizeSection(0, 50)
+        self.tabHH.resizeSection(1, 170)
+
+        LayoutWidget = QWidget(self,'Layout1')
+        LayoutWidget.setGeometry(QRect(200,240,476,33))
+        self.grid.addWidget(LayoutWidget, 2,1)
+        Layout1 = QHBoxLayout(LayoutWidget)
+        Layout1.setSpacing(6)
+        Layout1.setMargin(0)
+
+        self.insertSeparatorButton = QPushButton('Add Separator', LayoutWidget)
+        self.connect(self.insertSeparatorButton, SIGNAL("clicked()"), self.insertSeparator)
+        Layout1.addWidget(self.insertSeparatorButton)
+
+        spacer = QSpacerItem(20,20,QSizePolicy.Expanding,QSizePolicy.Minimum)
+        Layout1.addItem(spacer)
+
+        self.okButton = QPushButton('&OK', LayoutWidget)
+        self.okButton.setDefault(1)
+        Layout1.addWidget(self.okButton)
+        self.connect(self.okButton, SIGNAL("clicked()"), self.accept)
+
+        self.buttonCancel = QPushButton("&Cancel", LayoutWidget)
+        self.buttonCancel.setAutoDefault(1)
+        Layout1.addWidget(self.buttonCancel)
+        self.connect(self.buttonCancel, SIGNAL('clicked()'), self, SLOT('reject()'))
+
+        self.resize(250,250)
+
+    def accept(self):
+        self.shownWidgetList = []
+        self.hiddenWidgetList = []
+        for i in range(self.tab.numRows()):
+            if self.tab.cellWidget(i, 0).isChecked():
+                self.shownWidgetList.append(self.tab.text(i, 1))
+            elif self.tab.text(i,1) != "[Separator]":
+                self.hiddenWidgetList.append(self.tab.text(i,1))
+        QDialog.accept(self)
+
+
+    def insertSeparator(self):
+        curr = max(0, self.findSelected())
+        self.insertWidgetName("[Separator]", curr)
+
+
+    def insertWidgetName(self, name, index = -1):
+        if index == -1: index = self.tab.numRows()
+        self.tab.setNumRows(self.tab.numRows()+1)
+        for i in range(self.tab.numRows()-1, index-1, -1):
+            self.swapCells(i, i+1)
+        check = QCheckBox(self.tab)
+        check.setChecked(1)
+        self.tab.setCellWidget(index, 0, check)
+        self.tab.setText(index, 1, name)
+        #self.tab.adjustColumn(1)
+
+
+    def swapCells(self, row1, row2):
+        self.tab.swapCells( row1,0, row2, 0)
+        self.tab.swapCells( row1,1, row2, 1)
+        self.tab.updateCell(row1,0)
+        self.tab.updateCell(row1,1)
+        self.tab.updateCell(row2,0)
+        self.tab.updateCell(row2,1)
+
+    def findSelected(self):
+        for i in range(self.tab.numRows()):
+            if self.tab.isSelected(i, 0) or self.tab.isSelected(i, 1): return i
+        return -1
+
+
+if __name__=="__main__":
+    app = QApplication(sys.argv)
+    dlg = CanvasOptionsDlg(app)
+    app.setMainWidget(dlg)
+    dlg.show()
+    app.exec_loop()
+

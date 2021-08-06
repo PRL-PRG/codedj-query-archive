@@ -1,0 +1,125 @@
+class GenerationConstants:
+
+    TWO_ROOT_TWELVE = pow( 2, 1./12 )
+    MAX_NOTES_PER_BAR = 24
+
+    # Default parameters for algorithmic generation
+    DEFAULT_DENSITY = 0.7
+    DEFAULT_REPETE = .5
+    DEFAULT_STEP = -3
+    DEFAULT_ARTICULE = 0.7
+    DEFAULT_PANNER = 0
+
+    # Onset probability table for makeRythmSequence function 
+    TABLE_ONSET_VALUES = [ 30, 15, 20, 24, 30, 30, 30, 30, 30, 30, 30, 40, 40,
+                           40, 60, 60, 60, 60, 60, 60, 60, 80, 80, 80, 120, 120, 120, 120,
+                           120, 120, 120, 180, 180, 180, 240, 240, 240, 360, 360, 480, 480 ]
+
+    # scaling constants
+    MAJOR_SCALE = 'major'
+    HARMONIC_MINOR_SCALE = 'harmonic minor'
+    NATURAL_MINOR_SCALE = 'natural minor'
+    PENTATONIC_SCALE = 'pentatonic'
+    BLUES_SCALE = 'blues'
+    PHRYGIEN_SCALE = 'phrygien'
+                                                       
+    SCALES = { MAJOR_SCALE : [ -12, -10, -8, -7, -5, -3, -1, 0, 2, 4, 5, 7, 9, 11, 12 ],    
+                        HARMONIC_MINOR_SCALE : [ -12, -10, -9, -7, -5, -4, -1, 0, 2, 3, 5, 7, 8, 11, 12 ],
+                        NATURAL_MINOR_SCALE : [ -12, -10, -9, -7, -5, -4, -2, 0, 2, 3, 5, 7, 8, 10, 12 ],
+                         PENTATONIC_SCALE : [ -12, -10, -7, -5, -3, 0, 2, 5, 7, 9, 12 ],                           
+                        BLUES_SCALE : [ -12, -10, -9, -8, -7, -5, -3, -2, 0, 2, 3, 4, 5, 7, 9, 10, 12 ],
+                        PHRYGIEN_SCALE : [ -12, -11, -9, -7, -5, -4, -2, 0, 1, 3, 5, 7, 8, 10, 12 ] }
+
+    DEFAULT_SCALE = MAJOR_SCALE
+
+    DEFAULT_TONIQUE = 36
+
+    # pitch patterns constants
+    PITCH_PATTERNS = [ 'Drunk', 'DroneAndJump', 'Repeter', 'Loopseg' ]
+    DEFAULT_PATTERN = 'Loopseg'
+
+    # Parameters for probability scaling function
+    REPETITION_SCALE_MIN_MAPPING = 0
+    REPETITION_SCALE_MAX_MAPPING = 25
+    REPETITION_SCALE_STEPS = 25
+    DENSITY_SCALE_MIN_MAPPING = 0
+    DENSITY_SCALE_MAX_MAPPING = 40
+    DENSITY_SCALE_STEPS = 40
+    ARTICULATION_SCALE_MIN_MAPPING = .3
+    ARTICULATION_SCALE_MAX_MAPPING = 1
+    ARTICULATION_SCALE_STEPS = 30
+    PAN_SCALE_MIN_MAPPING = .5
+    PAN_SCALE_MAX_MAPPING = 1
+    PAN_SCALE_STEPS = 100
+
+    # Rythmic durations, in ticks, and how many to complete figure (celluleRythmSequence)
+    TRIPLE_TICK_DUR = 15
+    TRIPLE_HOW_MANY = 4
+    TRIPLE_TRIPLET_TICK_DUR = 20
+    TRIPLE_TRIPLET_HOW_MANY = 3
+    DOUBLE_QUINTUPLETS_TICK_DUR = 24
+    DOUBLE_QUINTUPLETS_HOW_MANY = 5
+    DOUBLE_TICK_DUR = 30
+    DOUBLE_HOW_MANY = 2
+    HALF_TRIPLET_TICK_DUR = 40
+    HALF_TRIPLET_HOW_MANY = 3
+    HOLE_TRIPLET_TICK_DUR = 80
+    HOLE_TRIPLET_HOW_MANY = 3
+
+    # Random generators default values (xnoiseRythmSequence)
+    RANDOM_BETA_PARAM = 0.004
+    RANDOM_EXPO_PARAM = 5
+    RANDOM_GAUSS_PARAM1 = 0.5
+    RANDOM_GAUSS_PARAM2 = 0.1
+    RANDOM_WEIBULL_PARAM1 = 0.5
+    RANDOM_WEIBULL_PARAM2 = 2.5
+
+    # Onsets probability tables (drumRythmSequence)
+
+    LOW_ACCENTS = [ [],
+                                            [ 0 ],
+                                            [ 0, 1 ],
+                                            [ 0, 2, 1 ],
+                                            [ 0, 2, 3, 1 ],
+                                            [ 0, 3, 2, 4, 1],
+                                            [ 0, 3, 2, 5, 1, 4 ],
+                                            [ 0, 2, 4, 6, 5, 3, 1 ],
+                                            [ 0, 4, 2, 6, 3, 7, 5, 1 ] ]
+                                          
+    MID_ACCENTS = [   [],
+                                            [ 0, 1 ],
+                                            [ 0, 2, 3, 1 ],
+                                            [ 0, 2, 4, 3, 1, 5 ],    
+                                            [ 0, 4, 6, 2, 7, 1, 3, 5 ],
+                                            [ 0, 6, 4, 8, 2, 1, 5, 3, 9, 7 ],
+                                            [ 0, 6, 11, 5, 3, 9, 10, 2, 8, 7, 1, 4 ],
+                                            [ 0, 4, 8, 12, 10, 13, 11, 9, 3, 2, 6, 5, 7, 1 ],
+                                            [ 0, 8, 4, 12, 6, 14, 2, 10, 7, 15, 1, 9, 3, 11, 5, 13 ]  ]  
+                                        
+    # 3 beats per page
+    LOW_DOWN_3 = [ (0, 150), (240, 70), (120, 30) ]
+    LOW_UP_3 = [ (180, 150), (300, 70), (60, 30) ]
+    MID_DOWN_3 = [ (0, 150), (120, 70), (240, 50), (300, 40), (180, 30), (60, 20) ]
+    MID_UP_3 = [ (330, 100), (150, 70), (270, 50), (30, 40), (210, 30), (90, 20) ]
+    HIGH_DOWN_3 = [ (330, 100), (150, 70), (270, 50), (30, 40), (210, 30), (90, 20) ]
+    HIGH_UP_3 = [ (0, 150), (120, 70), (240, 50), (300, 40), (180, 30), (60, 20) ]
+    # 4 beats per page
+    LOW_DOWN_4 = [ (0, 150), (240, 50), (360, 40), (120, 30) ]
+    LOW_UP_4 = [ (180, 150), (60, 70), (420, 50), (300, 30) ]
+    MID_DOWN_4 = [ (0, 150), (360, 85), (420, 70), (120, 60), (240, 50), (300, 40), (180, 30), (60, 20) ]
+    MID_UP_4 = [ (330, 100), (390, 85), (450, 70), (150, 60), (270, 50), (30, 40), (210, 30), (90, 20) ]
+    HIGH_DOWN_4 = [ (330, 100), (390, 85), (450, 70), (150, 60), (270, 50), (30, 40), (210, 30), (90, 20) ]
+    HIGH_UP_4 = [ (0, 150), (360, 85), (420, 70), (120, 60), (240, 50), (300, 40), (180, 30), (60, 20) ]
+    # 5 beats per page
+    LOW_DOWN_5 = [ (0, 150), (360, 80), (240, 50), (480, 50), (120, 30) ]
+    LOW_UP_5 = [ (180, 150), (540, 70), (420, 50), (300, 40), (60, 30) ]
+    MID_DOWN_5 = [ (0, 150), (360, 85), (420, 70), (120, 60), (240, 50), (480, 40), (540, 40), (180, 30), (60, 20), (300, 20) ]
+    MID_UP_5 = [ (330, 100), (390, 85), (450, 70), (150, 60), (270, 50), (540, 40), (510, 40), (210, 30), (90, 20), (30, 20) ]
+    HIGH_DOWN_5 = [ (330, 100), (390, 85), (450, 70), (150, 60), (270, 50), (570, 40), (510, 40), (210, 30), (90, 20), (30, 20) ]
+    HIGH_UP_5 = [ (0, 150), (360, 85), (420, 70), (120, 60), (240, 50), (480, 40), (540, 40), (180, 30), (60, 20), (300, 20) ]
+
+    # Gain boundaries
+    GAIN_MAX_BOUNDARY = 1.
+    GAIN_MID_MAX_BOUNDARY = .85
+    GAIN_MID_MIN_BOUNDARY = .7
+    GAIN_MIN_BOUNDARY = .5

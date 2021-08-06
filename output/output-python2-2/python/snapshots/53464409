@@ -1,0 +1,59 @@
+from libtbx import test_utils
+import libtbx.load_env
+
+def run():
+  tst_list = (
+  "$D/chemical_components/tst.py",
+  "$D/regression/tst_add_h_to_water.py",
+  "$D/rotamer/rotamer_eval.py",
+  "$D/wwpdb/tst_standard_geometry_cif.py",
+  "$D/tst_pdbtools.py",
+  "$D/real_space/tst.py",
+  "$D/ias/tst_ias.py",
+  ["$D/refinement/tst_anomalous_scatterer_groups.py", "P3"],
+  "$D/refinement/tst_rigid_body.py",
+  "$D/refinement/tst_refinement_flags.py",
+  "$D/tst_model.py",
+  "$D/tst_fmodel.py",
+  "$D/tst_utils.py",
+  "$D/tst_alignment.py",
+  ["$D/tst_fmodel_fd.py", "P31"],
+  "$D/ncs/tst_restraints.py",
+  "$D/ncs/tst_restraints.py",
+  ["$D/ncs/ncs.py", "exercise"],
+  "$D/regression/tst_adp_restraints.py",
+  "$D/scaling/tst_scaling.py",
+  "$D/scaling/tst_outlier.py",
+  "$D/scaling/absence_likelihood.py",
+  ["$D/scaling/thorough_outlier_test.py", "P21"],
+  "$D/twinning/probabalistic_detwinning.py",
+  "$D/monomer_library/tst_rna_sugar_pucker_analysis.py",
+  "$D/monomer_library/tst_cif_types.py",
+  "$D/monomer_library/tst_motif.py",
+  "$D/monomer_library/tst_selection.py",
+  "$D/monomer_library/tst_tyr_from_gly_and_bnz.py",
+  "$D/monomer_library/tst_pdb_interpretation.py",
+  "$D/monomer_library/tst_rna_dna_interpretation.py",
+  "$D/monomer_library/tst_protein_interpretation.py",
+  "$D/regression/tst_altloc_chain_break.py",
+  "$D/hydrogens/build_hydrogens.py",
+  "$D/max_lik/tst_maxlik.py",
+  "$D/masks/tst_masks.py",
+  "$D/max_lik/tst_max_lik.py",
+  "$D/dynamics/tst_cartesian_dynamics.py",
+  "$D/tls/tst_tls.py",
+  "$D/tls/tst_get_t_scheme.py",
+  "$D/tls/tst_tls_refinement_fft.py",
+  "$D/examples/f_model_manager.py",
+  "$D/bulk_solvent/tst_bulk_solvent_and_scaling.py",
+  "$D/alignment.py",
+  "$D/invariant_domain.py",
+  )
+
+  build_dir = libtbx.env.under_build("mmtbx")
+  dist_dir = libtbx.env.dist_path("mmtbx")
+
+  test_utils.run_tests(build_dir, dist_dir, tst_list)
+
+if (__name__ == "__main__"):
+  run()

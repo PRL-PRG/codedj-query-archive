@@ -1,0 +1,17 @@
+#
+# linalg - Linear algebra routines
+#
+
+from info import __doc__
+from linalg_version import linalg_version as __version__
+
+from basic import *
+from decomp import *
+from matfuncs import *
+from blas import *
+from iterative import *
+
+__all__ = filter(lambda s:not s.startswith('_'),dir())
+
+from scipy.testing import ScipyTest 
+test = ScipyTest().test

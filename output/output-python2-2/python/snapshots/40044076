@@ -1,0 +1,197 @@
+from Screen import Screen
+from Components.ActionMap import NumberActionMap
+from Components.ActionMap import ActionMap
+from Components.ConfigList import ConfigList
+from Components.config import *
+from Components.MenuList import MenuList
+from Components.NimManager import nimmanager
+from Components.config import getConfigListEntry
+
+class NimSetup(Screen):
+	def createSimpleSetup(self, nim, list, mode):
+		if mode == 0:			#single Sat
+			list.append(getConfigListEntry(_("Satellite"), config.Nims[nim.slotid].diseqcA))
+		else:							# > 1 Sats
+			list.append(getConfigListEntry(_("Port A"), config.Nims[nim.slotid].diseqcA))
+
+		if mode >= 1:			# > 1 Sats
+			list.append(getConfigListEntry(_("Port B"), config.Nims[nim.slotid].diseqcB))
+			if mode >= 3:		# > 2 Sats
+				list.append(getConfigListEntry(_("Port C"), config.Nims[nim.slotid].diseqcC))
+				list.append(getConfigListEntry(_("Port D"), config.Nims[nim.slotid].diseqcD))
+	
+	def createPositionerSetup(self, nim, list):
+		list.append(getConfigListEntry(_("Positioner mode"), config.Nims[nim.slotid].positionerMode))
+		if (currentConfigSelectionElement(config.Nims[nim.slotid].positionerMode) == "usals"): # USALS
+			list.append(getConfigListEntry(_("Longitude"), config.Nims[nim.slotid].longitude))
+			list.append(getConfigListEntry("", config.Nims[nim.slotid].longitudeOrientation))
+			list.append(getConfigListEntry(_("Latitude"), config.Nims[nim.slotid].latitude))
+			list.append(getConfigListEntry("", config.Nims[nim.slotid].latitudeOrientation))
+		elif (currentConfigSelectionElement(config.Nims[nim.slotid].positionerMode) == "manual"): # manual
+			pass
+	
+	def createSetup(self):
+		print "Creating setup"
+		self.list = [ ]
+
+		self.configMode = None
+		self.diseqcModeEntry = None
+		self.advancedSatsEntry = None
+		self.advancedLnbsEntry = None
+		self.advancedDiseqcMode = None
+		self.advancedUsalsEntry = None
+		self.advancedLof = None
+		self.advancedPowerMeasurement = None
+
+		if (nimmanager.getNimType(self.nim.slotid) == nimmanager.nimType["DVB-S"]):
+			self.configMode = getConfigListEntry(_("Configuration Mode"), config.Nims[self.nim.slotid].configMode)
+			self.list.append(self.configMode)
+			
+			if currentConfigSelectionElement(config.Nims[self.nim.slotid].configMode) == "simple":			#simple setup
+				self.diseqcModeEntry = getConfigListEntry(_("DiSEqC Mode"), config.Nims[self.nim.slotid].diseqcMode)
+				self.list.append(self.diseqcModeEntry)
+			
+				if (0 <= config.Nims[self.nim.slotid].diseqcMode.value < 4):
+					self.createSimpleSetup(self.nim, self.list, config.Nims[self.nim.slotid].diseqcMode.value)
+				if (config.Nims[self.nim.slotid].diseqcMode.value == 4):
+					self.createPositionerSetup(self.nim, self.list)
+			elif currentConfigSelectionElement(config.Nims[self.nim.slotid].configMode) == "nothing": # nothing
+				#self.list.append(getConfigListEntry(_("Linked to"), config.Nims[self.nim.slotid].linkedTo))
+				pass
+			elif currentConfigSelectionElement(config.Nims[self.nim.slotid].configMode) == "loopthrough": # linked
+				pass
+			elif currentConfigSelectionElement(config.Nims[self.nim.slotid].configMode) == "advanced": # advanced
+				# SATs
+				self.advancedSatsEntry = getConfigListEntry(_("Satellite"), config.Nims[self.nim.slotid].advanced.sats)
+				self.list.append(self.advancedSatsEntry)
+				currSat = config.Nims[self.nim.slotid].advanced.sat[nimmanager.satList[config.Nims[self.nim.slotid].advanced.sats.value][1]]
+				currLnb = config.Nims[self.nim.slotid].advanced.lnb[currSat.lnb.value]
+				
+				self.list.append(getConfigListEntry(_("Voltage mode"), currSat.voltage))
+				self.list.append(getConfigListEntry(_("Tone mode"), currSat.tonemode))
+				if (currLnb != 0 and currentConfigSelectionElement(currLnb.diseqcMode) == "1_2"):
+					self.advancedUsalsEntry = getConfigListEntry(_("Use usals for this sat"), currSat.usals)
+					self.list.append(self.advancedUsalsEntry)
+					if (currentConfigSelectionElement(currSat.usals) == "no"):
+						self.list.append(getConfigListEntry(_("Stored position"), currSat.rotorposition))
+				
+				# LNBs
+				self.advancedLnbsEntry = getConfigListEntry(_("LNB"), currSat.lnb)
+				self.list.append(self.advancedLnbsEntry)
+				if currLnb != 0:
+					self.advancedDiseqcMode = getConfigListEntry(_("DiSEqC mode"), currLnb.diseqcMode)
+					self.list.append(self.advancedDiseqcMode)
+					if currentConfigSelectionElement(currLnb.diseqcMode) != "none":
+						self.list.append(getConfigListEntry(_("Committed DiSEqC command"), currLnb.commitedDiseqcCommand))
+						self.list.append(getConfigListEntry(_("Fast DiSEqC"), currLnb.fastDiseqc))
+						self.list.append(getConfigListEntry(_("Sequence repeat"), currLnb.sequenceRepeat))
+						if currentConfigSelectionElement(currLnb.diseqcMode) == "1_0":
+							self.list.append(getConfigListEntry(_("Command order"), currLnb.commandOrder1_0))
+						else:
+							self.list.append(getConfigListEntry(_("Command order"), currLnb.commandOrder))
+							self.list.append(getConfigListEntry(_("Uncommitted DiSEqC command"), currLnb.uncommittedDiseqcCommand))
+							self.list.append(getConfigListEntry(_("DiSEqC repeats"), currLnb.diseqcRepeats))
+						if currentConfigSelectionElement(currLnb.diseqcMode) == "1_2":
+							self.list.append(getConfigListEntry(_("Longitude"), currLnb.longitude))
+							self.list.append(getConfigListEntry("", currLnb.longitudeOrientation))
+							self.list.append(getConfigListEntry(_("Latitude"), currLnb.latitude))
+							self.list.append(getConfigListEntry("", currLnb.latitudeOrientation))
+							self.advancedPowerMeasurement = getConfigListEntry("Use Power Measurement", currLnb.powerMeasurement)
+							self.list.append(self.advancedPowerMeasurement)
+							if currentConfigSelectionElement(currLnb.powerMeasurement) == "yes":
+								self.list.append(getConfigListEntry("Power Threshold in mA", currLnb.powerThreshold))
+					self.advancedLof = getConfigListEntry(_("LOF"), currLnb.lof)
+					self.list.append(self.advancedLof)
+					if currentConfigSelectionElement(currLnb.lof) == "user_defined":
+						self.list.append(getConfigListEntry(_("LOF/L"), currLnb.lofl))
+						self.list.append(getConfigListEntry(_("LOF/H"), currLnb.lofh))
+						self.list.append(getConfigListEntry(_("Threshold"), currLnb.threshold))
+					self.list.append(getConfigListEntry(_("12V Output"), currLnb.output_12v))
+					self.list.append(getConfigListEntry(_("Increased voltage"), currLnb.increased_voltage))
+					self.list.append(getConfigListEntry(_("Toneburst"), currLnb.toneburst))
+		elif (nimmanager.getNimType(self.nim.slotid) == nimmanager.nimType["DVB-C"]):
+			self.list.append(getConfigListEntry(_("Cable provider"), config.Nims[self.nim.slotid].cable))
+		elif (nimmanager.getNimType(self.nim.slotid) == nimmanager.nimType["DVB-T"]):
+			self.list.append(getConfigListEntry(_("Terrestrial provider"), config.Nims[self.nim.slotid].terrestrial))
+
+
+		self["config"].list = self.list
+		self["config"].l.setList(self.list)
+		
+	def newConfig(self):
+		checkList = (self.configMode, self.diseqcModeEntry, self.advancedSatsEntry, self.advancedLnbsEntry, self.advancedDiseqcMode, self.advancedUsalsEntry, self.advancedLof, self.advancedPowerMeasurement)
+		for x in checkList:
+			if self["config"].getCurrent() == x:
+				self.createSetup()			
+	def keyLeft(self):
+		self["config"].handleKey(config.key["prevElement"])
+		self.newConfig()
+
+	def keyRight(self):
+		self["config"].handleKey(config.key["nextElement"])
+		self.newConfig()
+
+	def keyNumberGlobal(self, number):
+		print "You pressed number " + str(number)
+		if (self["config"].getCurrent()[1].parent.enabled == True):
+			self["config"].handleKey(config.key[str(number)])
+
+	def run(self):
+		for x in self["config"].list:
+			x[1].save()
+		nimmanager.sec.update()	
+
+	def keySave(self):
+		self.run()
+		self.close()
+
+	def keyCancel(self):
+		for x in self["config"].list:
+			x[1].cancel()
+		self.close()
+
+	def __init__(self, session, slotid):
+		Screen.__init__(self, session)
+		
+		self.nim = nimmanager.nimList()[slotid][1]
+		
+		self["actions"] = NumberActionMap(["SetupActions"],
+		{
+			"ok": self.keySave,
+			"cancel": self.keyCancel,
+			"left": self.keyLeft,
+			"right": self.keyRight,
+			"1": self.keyNumberGlobal,
+			"2": self.keyNumberGlobal,
+			"3": self.keyNumberGlobal,
+			"4": self.keyNumberGlobal,
+			"5": self.keyNumberGlobal,
+			"6": self.keyNumberGlobal,
+			"7": self.keyNumberGlobal,
+			"8": self.keyNumberGlobal,
+			"9": self.keyNumberGlobal,
+			"0": self.keyNumberGlobal
+		}, -1)
+
+		self.list = [ ]
+		self["config"] = ConfigList(self.list)
+		
+		self.createSetup()
+
+class NimSelection(Screen):
+	def __init__(self, session):
+		Screen.__init__(self, session)
+
+		self["nimlist"] = MenuList(nimmanager.nimList())
+
+		self["actions"] = ActionMap(["OkCancelActions"],
+		{
+			"ok": self.okbuttonClick ,
+			"cancel": self.close
+		}, -1)
+
+	def okbuttonClick(self):
+		selection = self["nimlist"].getCurrent()
+		if selection[1].nimType != -1:	#unknown/empty
+			self.session.open(NimSetup, selection[1].slotid)
+	

@@ -1,0 +1,1 @@
+../casp7/python/alignfile2fasta.py

@@ -1,0 +1,66 @@
+from pyjamas.ui import TabPanel, HasAlignment, Image, VerticalPanel, RootPanel
+from pyjamas.ui import HorizontalPanel, HTML, Composite
+#from pyjamas.ui import DecoratorPanel
+from pyjamas.ui import MouseListener, Event
+from pyjamas import Window
+from pyjamas.decoratorpanel import DecoratedTabPanel, DecoratorPanel
+from pyjamas.decoratorpanel import DecoratorTitledPanel
+
+#class PrettyTab(DecoratorPanel):
+class PrettyTab(Composite):
+
+    def __init__(self, text, imageUrl):
+
+        DecoratorPanel.__init__(self, DecoratorPanel.DECORATE_ALL)
+
+        p = HorizontalPanel()
+        p.setSpacing(3)
+        self.img = Image(imageUrl)
+        self.txt = HTML(text)
+        p.add(self.img)
+        p.add(self.txt)
+
+        self.add(p)
+
+    def addClickListener(self, listener):
+
+        self.img.addClickListener(listener)
+        self.txt.addClickListener(listener)
+
+class Tabs:
+
+    def onModuleLoad(self):
+
+        #red = PrettyTab("1638", "images/user_red.png")
+        #red.setStyleName('gwt-TabBarItem')
+
+        #green = PrettyTab("1640", "images/user_green.png")
+        #red.setStyleName('gwt-TabBarItem')
+        red = "1638"
+        green = "1640"
+
+        self.fTabs = DecoratedTabPanel()
+        self.fTabs.add(self.createImage("rembrandt/JohannesElison.jpg"), red, True)
+        self.fTabs.add(self.createImage("rembrandt/SelfPortrait1640.jpg"), green, True)
+        self.fTabs.add(self.createImage("rembrandt/LaMarcheNocturne.jpg"), "1642")
+        self.fTabs.add(self.createImage("rembrandt/TheReturnOfTheProdigalSon.jpg"), "1662")
+        self.fTabs.selectTab(0)
+
+        self.fTabs.setWidth("100%")
+        self.fTabs.setHeight("100%")
+
+        dp = DecoratorTitledPanel("Tabs", "bluetitle", "bluetitleicon",
+                      ["bluetop", "bluetop2", "bluemiddle", "bluebottom"])
+        dp.add(self.fTabs)
+        RootPanel().add(dp)
+
+    def createImage(self, imageUrl):
+        image = Image(imageUrl)
+        image.setStyleName("ks-images-Image")
+        
+        p = VerticalPanel()
+        p.setHorizontalAlignment(HasAlignment.ALIGN_CENTER)
+        p.setVerticalAlignment(HasAlignment.ALIGN_MIDDLE)
+        p.add(image)
+
+        return p

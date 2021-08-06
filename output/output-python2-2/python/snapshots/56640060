@@ -1,0 +1,164 @@
+"""
+<name>Association Rules Viewer</name>
+<description>Association rules viewer.</description>
+<icon>icons/AssociationRulesViewer.png</icon>
+<contact>Janez Demsar (janez.demsar(@at@)fri.uni-lj.si)</contact> 
+<priority>300</priority>
+"""
+
+from OWWidget import *
+import OWGUI
+
+import sys, re
+from qt import *
+from OWTools import *
+
+
+class OWAssociationRulesViewer(OWWidget):
+    def __init__(self,parent=None, signalManager = None):
+        OWWidget.__init__(self, parent, signalManager, "Association rules viewer")
+
+        self.inputs = [("Association Rules", orange.AssociationRules, self.arules)]
+        self.outputs = []
+        
+        # Settings
+        self.showWholeRules = 1
+        self.treeDepth = 2
+ 
+        self.settingsList = ["treeDepth", "showWholeRules"]
+
+        
+        OWGUI.widgetLabel("Tree depth")
+        OWGUI.hSlider(self.controlArea, self, "treeDepth", minValue = 0, maxValue = 10, step = 1, callback = self.displayRules)
+
+        self.layout=QVBoxLayout(self.mainArea)
+        self.treeRules = QListView(self.mainArea,'ListView')       #the rules and their properties are printed into this QListView
+        self.treeRules.setMultiSelection (1)              #allow multiple selection
+        self.treeRules.setAllColumnsShowFocus ( 1) 
+        self.treeRules.addColumn(self.tr("Rules"))        #column0
+
+##        self.gbox= QVGroupBox ( "Measures", self.controlArea, "gbox" )
+        for attr in ["Support", "Confidence", "Lift", "Leverage", "Strength", "Coverage"]:
+##            self.settingsList.append("show"+attr)
+##            setattr(self, "show"+attr, 0)
+##            OWGUI.checkBox(self.gbox, self, "show" + attr, attr, callback = self.displayRules)
+            self.treeRules.addColumn(self.tr(attr), 60)
+        
+        OWGUI.checkBox(self.controlArea, self, "showWholeRules", "Display whole rules", callback = self.setWholeRules)
+        self.showSupport = self.showConfidence = 1
+        self.loadSettings()
+
+        self.layout.addWidget(self.treeRules)
+        
+        self.rules = None
+
+
+    def setWholeRules(self):
+        d = self.showWholeRules and 1 or 2
+        for line in self.wrlist:
+            line[0].setText(0,line[d])
+        
+
+    def displayRules(self):
+        """ Display rules as a tree. """
+        if self.rules:
+            self.treeRules.clear()
+            self.wrlist = []
+            
+            item0 = QListViewItem(self.treeRules,"")        #the first row is different
+            
+            rulesLC=[]
+            for rule in self.rules:                 # local copy of rules [[antecedens1,antecedens2,...], [consequens, support,...]] (without measures)
+                values = filter(lambda val: not val.isSpecial(), rule.left)
+
+                antecedens = []
+                for x in values:
+                    if x.varType:
+                        antecedens.append(str(x.variable.name) + "=" + str(x))
+                    else:
+                        antecedens.append(str(x.variable.name))
+                                
+                values = filter(lambda val: not val.isSpecial(), rule.right)
+
+                kons=""
+                for x in values:
+                    if x.varType:
+                        kons=kons + str(x.variable.name) + "=" + str(x) + "  "
+                    else:
+                        kons=kons + str(x.variable.name) + "  "
+                
+                rulesLC.append([antecedens, [kons, rule.support, rule.confidence, rule.lift, rule.leverage, rule.strength, rule.coverage]])
+            
+            self.buildLayer(item0, rulesLC, self.treeDepth )     # recursively builds as many layers as are in the.................
+            self.removeSingleGrouping(item0)        # if there is only 1 rule behind a +, the rule is
+            self.setWholeRules()
+            item0.setOpen(1)                        # display the rules
+
+
+
+    def buildLayer(self, parent, rulesLC, n):
+        if n==0:
+           self.printRules(parent, rulesLC)
+        elif n>0:
+            children = []
+            for rule in rulesLC:                                 # for every rule
+                for a in rule[0]:                                # for every antecedens 
+                    if a not in children:                        # if it is not in the list of children, add it
+                        children.append(a)
+            for childText in children:                           # for every entry in the list of children
+                item=QListViewItem(parent,childText)             # add a branch with the text
+                rules2=[]
+                for rule in rulesLC:                             # find rules that go in this branch
+                    if childText in rule[0]:
+                        if len(rule[0])==1:
+                            self.printRules(item, [[[],rule[1]]])
+                        else:
+                            rules2.append([rule[0][:],rule[1]]) # make a locla copy of rule
+                            rules2[-1][0].remove( childText)    # remove the element childText from the antecedenses
+                self.buildLayer(item, rules2, n-1)              # recursively build next levels
+
+
+    def printRules(self, parent, rulesLC):
+        """ Prints whole rule or the rest of the rule, depending on WholeRules.isChecked(), as a child of parent."""
+        startOfRule=""                                          # the part of rule that is already in the tree
+        gparent=parent
+        while str(gparent.text(0))!="":
+            startOfRule = str(gparent.text(0)) +"  "+startOfRule 
+            gparent=gparent.parent()        
+            
+        for rule in rulesLC:
+            restOfRule=""                         # concatenate the part that is already in the tree
+            for s in rule[0]:                                   # with the rest of the antecedeses
+                restOfRule=restOfRule+"  "+s
+            
+            item=QListViewItem(parent,"", str('%.3f' %rule[1][1]),str('%.3f' %rule[1][2]),str('%.3f' %rule[1][3]),str('%.3f' %rule[1][4]),str('%.3f' %rule[1][5]),str('%.3f' %rule[1][6]))             # add a branch with the text
+            self.wrlist.append([item, startOfRule + restOfRule+"  ->   "+rule[1][0] , restOfRule+"  ->   "+rule[1][0]])
+
+
+    def removeSingleGrouping(self,item0):         
+        """Removes a row if it has a "+" and only one child.  """
+        for line in self.wrlist:                    # go through the leaves of the tree
+            parent=line[0].parent()
+            if (parent.childCount())==1:            # if the parent has only one child
+                line[2]=str(parent.text(0))+"  "+line[2]    # add the text to the leaf
+                gparent = parent.parent()                   # find the grand-parent
+                gparent.takeItem(parent)                    # remove the parent
+                gparent.insertItem(line[0])                 # insert a child        
+
+
+    def arules(self,arules):
+        self.rules = arules
+        self.displayRules()
+
+if __name__=="__main__":
+    a=QApplication(sys.argv)
+    ow=OWAssociationRulesViewer()
+    a.setMainWidget(ow)
+
+    dataset = orange.ExampleTable('..\\..\\doc\\datasets\\car.tab')
+    rules=orange.AssociationRulesInducer(dataset, minSupport = 0.3, maxItemSets=15000)
+    ow.arules(rules)
+    
+    ow.show()
+    a.exec_loop()
+    ow.saveSettings()

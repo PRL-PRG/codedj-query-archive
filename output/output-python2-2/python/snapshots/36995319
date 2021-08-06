@@ -1,0 +1,1 @@
+../casp7/python/truncate_rosetta_files.py

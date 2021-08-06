@@ -1,0 +1,400 @@
+# coding: UTF-8
+#
+# TileCutter, version 0.5
+#
+
+# Todo:
+
+# BUG - Set active image to new image, then edit textbox to make path invalid, then edit it back to the original -> highlighting fails
+# BUG - Season select does not set to summer when enable winter is unchecked
+
+
+# Move debug into own module, to allow it to be easily accessed by other modules        - DONE
+
+# Find some way to eliminate flickering on translation update/initial load              
+# Text entry boxes visible position at end, or cursor, rather than beginning            
+# Padding/general layout optimisation                                                   
+# -> Layout optimisation for mac                                                        
+# Cutting mask display based on dimensions                                              - DONE
+# Make .dat and input images relative to save location path                             
+# Speed optimisations - switching views seems really sluggish!                          
+# Optimise code for generating lists in comboboxes (translation slowing this?)          
+
+# Finish output file boxes, switching them to use the new set of functions              - DONE
+# Do the project save/load/new etc. and management functionality (using pickle & hash)  
+#   Multi-project system for later versions                                             - POSTPONE 0.7
+
+# Program settings, load from a config file (using configparser)                        
+# Dialog to set program options                                                         
+# Implement use of special menu IDs to make menus work properly on, e.g., mac osx       
+# Produce frames picker control                                                         - POSTPONE 0.6
+# Offset/Mask control - internal functions, click modifies model & triggers redrawing   - DONE
+# Dims control - click modifies model & triggers redrawing                              - DONE
+# Direction/Season/Dims - trigger redrawing                                             - DONE
+
+# Translation system - On the fly translation system now possible                       - DONE
+# Menu translations                                                                     - DONE
+# Translation system needs work to function correctly with unicode strings              - DONE (files MUST be UTF-8)
+# Find some way of translating the entries in combo boxes!                              - DONE
+
+# Current view context built into activeproject, details of the currently selected view - DONE
+# Implement current view context to all view controls                                   - DONE
+# Source image control (needs current view context)                                     - MOSTLY DONE
+# -> File must exist                                                                    - DONE
+# -> Implement modal dialog for browse                                                  - DONE
+# -> Allow text entry, highlight in red if file does not exist??                        - DONE (Needs icons for tick/cross)
+# -> Implement modal confirmation dialog for "open same file for all" button            
+# "Warning, this will set all views in the project to use the current image, proceed?"  
+# -> Function to reload the current view's image                                        - DONE
+
+# Move UI classes into a module to enhance loading speed        - MOSTLY DONE (JUST IMAGEWINDOW TO MOVE)
+
+# Needs much better error handling, add try/except clauses in critical places
+# Could also encase entire script in an exception catcher, which can display exception 
+#   and then gracefully shutdown wx, to prevent the flashing box/pythonwin crashing problem
+
+# Add the TileCutter icon                                                               - Icon made, works well in windows
+# Use img2py to compile icon image into the application                                 - DONE
+# Can use the same technique for all the other images, e.g. bitmap buttons etc.         - DONE
+# Need higher detail icons for the mac version                                          - DONE (Test icon display in OSX)
+
+# About dialog                                                                          - DONE
+# Make py2exe, look into producing smaller packages     - Also py2app                   
+#   Import only bits of wx needed, to reduce py2exe package?                            
+# Look into producing more mac-native package                                           
+# Mac drag + drop support                                                               
+# Linux just the script                                                                 
+# Test with Linux, Mac OSX, Windows (xp), try and have the same code across all platforms!
+# Produce help documentation                                                            
+# -> Quick start guide (interface should be fairly self-explanatory though)             
+
+
+# Aims v.0.5
+# Rewrite core cutting engine and output engine
+# Produce minimal testing UI
+#   - Set X/Y/Z dims, X/Y offsets, facing/season
+#   - Determine output .png, .dat etc.
+# Debugging system with nice output
+# Translation function implemented
+# Project save/load functions
+
+# Aims v.0.6
+# Extend UI, include dat editor
+
+# Aims v.0.7
+# Multi-project support
+
+import wx
+##import wx.lib.masked as masked
+##import wx.lib.scrolledpanel as scrolled
+##import wx.lib.hyperlink as hl
+
+import sys, os, ConfigParser, StringIO, re, codecs, pickle
+import tcui, translator
+import tc, tcproject, imres
+
+# Utility functions
+from translator import gt as gt
+from debug import DebugFrame as debug
+
+# Init variables
+debug_on = True
+
+VERSION_NUMBER = "0.5a"
+TRANSPARENT = (0,0,0)
+##TRANSPARENT = (231,255,255)
+DEFAULT_PAKSIZE = "64"
+PROJECT_FILE_EXTENSION = ".tcp"
+### SB_WIDTH may be different on other platforms...
+##SCROLLBAR_WIDTH = 16
+VALID_IMAGE_EXTENSIONS = tcproject.VALID_IMAGE_EXTENSIONS
+MAIN_WINDOW_SIZE=(800,500)
+MAIN_WINDOW_MINSIZE=(800,500)
+MAIN_WINDOW_POSITION=(100,50)
+
+# Static variables
+South   = 0
+East    = 1
+North   = 2
+West    = 3
+Back    = 0
+Front   = 1
+Summer  = 0
+Winter  = 1
+
+# Lists of values for choicelists, also provides acceptable values for the project class
+# Also set in tcproject module
+##choicelist_anim = ["0",]
+choicelist_paksize_int = [16,32,48,64,80,96,112,128,144,160,176,192,208,224,240]
+choicelist_views_int = [1,2,4]
+choicelist_dims_int = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]
+choicelist_dims_z_int = [1,2,3,4]
+# Need some kind of auto-generation function for the translator, to produce a range of numbers (0-64, then in 16 increments to 240)
+##choicelist_paksize = [gt("16"),gt("32"),gt("48"),gt("64"),gt("80"),gt("96"),gt("112"),gt("128"),gt("144"),gt("160"),gt("176"),gt("192"),gt("208"),gt("224"),gt("240")]
+##choicelist_views = ["1","2","4"]
+##choicelist_dims = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16"]
+##choicelist_dims_z = ["1","2","3","4"]
+
+
+
+class MainWindow(wx.Frame):
+    """Main frame window inside which all else is put"""
+    def __init__(self, parent, id, title, windowsize, windowposition, windowminsize):
+        wx.Frame.__init__(self, parent, wx.ID_ANY, title, windowposition, windowsize,
+                                        style=wx.DEFAULT_FRAME_STYLE|wx.TAB_TRAVERSAL
+                                        )
+        # Init stuff
+        self.SetMinSize(windowminsize)
+
+        # Set the program's icon
+        self.icons = wx.IconBundle()
+        self.icons.AddIcon(imres.catalog["tc_icon2_16_plain"].getIcon())
+        self.icons.AddIcon(imres.catalog["tc_icon2_32_plain"].getIcon())
+        self.icons.AddIcon(imres.catalog["tc_icon2_48_plain"].getIcon())
+        self.SetIcons(self.icons)
+        app.debug.SetIcons(self.icons)
+
+        # Create the menus
+        self.menubar = tcui.menuObject(self, app)
+        self.SetMenuBar(self.menubar.menu)
+
+        # self.panel contains all other elements within this frame and must be their parent
+        self.panel = wx.Panel(self, wx.ID_ANY)
+
+        # Overall panel sizer
+        self.s_panel = wx.BoxSizer(wx.VERTICAL)
+
+        # Two vertical divisions
+        self.s_panel_top = wx.BoxSizer(wx.HORIZONTAL)
+        # Within the top panel, two horizontal divisions, one for the controls, one for the image window
+        self.s_panel_controls = wx.BoxSizer(wx.VERTICAL)                # Left side
+
+        self.s_panel_imagewindow_container = wx.BoxSizer(wx.VERTICAL)   # Right side
+
+        self.s_panel_bottom = wx.BoxSizer(wx.HORIZONTAL)
+        self.s_panel_bottom_right = wx.BoxSizer(wx.HORIZONTAL)          # Contains cut/export buttons
+
+        # LEFT SIDE CONTROLS
+        # Left side controls are contained within static boxes
+        # Frame controls-------------------------------------------------------------------
+
+        # Season controls------------------------------------------------------------------
+        self.control_seasons    = tcui.seasonControl(self.panel, app, self.s_panel_controls)
+        # Image controls-------------------------------------------------------------------
+        self.control_images     = tcui.imageControl(self.panel, app, self.s_panel_controls)
+        # Facing controls------------------------------------------------------------------
+        self.control_facing     = tcui.facingControl(self.panel, app, self.s_panel_controls)
+        # Dimension controls---------------------------------------------------------------
+        self.control_dims       = tcui.dimsControl(self.panel, app, self.s_panel_controls)
+        # Offset/mask controls-------------------------------------------------------------
+        self.control_offset     = tcui.offsetControl(self.panel, app, self.s_panel_controls)
+
+        # Create Image display window and image path entry control, which adds itself to the sizer
+        self.display = tcui.imageWindow(self.panel, app, self.s_panel_imagewindow_container, TRANSPARENT)
+
+        # IMAGE/DAT OUTPUT PATHS
+        # Create the I/O path inputs, which are added to the bottom-left panel container
+        self.control_iopaths = tcui.twoFileControl(self.panel, app, self.s_panel_bottom)
+
+        # CUT/EXPORT BUTTONS
+        # Cut button
+        self.cut_button = wx.Button(self.panel, wx.ID_ANY)
+        self.cut_button.Bind(wx.EVT_BUTTON, self.menubar.OnCutProject, self.cut_button)
+        self.s_panel_bottom_right.Add(self.cut_button, 1, wx.EXPAND, 4)
+        # Export button
+        self.export_button = wx.Button(self.panel, wx.ID_ANY)
+        self.export_button.Bind(wx.EVT_BUTTON, self.menubar.OnExportProject, self.export_button)
+        self.s_panel_bottom_right.Add(self.export_button, 1, wx.EXPAND, 4)
+        # Add these buttons to the bottom-right panel container
+        self.s_panel_bottom.Add(self.s_panel_bottom_right,0,wx.EXPAND, 0)
+
+        # SIZERS
+        # Add the remaining sizers to each other
+        # Top panel, left side controls and right side image window added
+        self.s_panel_top.Add(self.s_panel_controls,0,wx.EXPAND|wx.RIGHT, 1)
+        self.s_panel_top.Add(self.s_panel_imagewindow_container,1,wx.EXPAND, 0)
+        # Add bottom and top parts to overall panel 
+        self.s_panel.Add(self.s_panel_top,1,wx.EXPAND, 0)
+        self.s_panel.Add(self.s_panel_bottom,0,wx.EXPAND|wx.RIGHT, 0)
+
+        # Layout sizers
+        self.panel.SetSizer(self.s_panel)
+        self.panel.SetAutoLayout(1)
+        self.panel.Layout()
+
+        self.translate()
+
+    def translate(self):
+        """Master translate function for the mainwindow object"""
+        self.cut_button.SetLabel(gt("Cut"))
+        self.export_button.SetLabel(gt("Export"))
+        # And translate the window's title string
+        # Then call translate methods of all child controls
+        self.control_seasons.translate()
+        self.control_images.translate()
+        self.control_facing.translate()
+        self.control_dims.translate()
+        self.control_offset.translate()
+        self.control_iopaths.translate()
+        # And the menus
+        self.menubar.translate()
+        # Finally re-do the window's layout
+        self.panel.Layout()
+##        self.update()
+
+    def update(self):
+        """Update frame and all its children to reflect values in the active project"""
+        self.control_seasons.update()
+        self.control_images.update()
+        self.control_facing.update()
+        self.control_dims.update()
+        self.control_offset.update()
+        self.control_iopaths.update()
+        self.display.update()
+
+class MyApp(wx.App):
+    """The main application, pre-window launch stuff should go here"""
+    VERSION_NUMBER = VERSION_NUMBER
+    VALID_IMAGE_EXTENSIONS = VALID_IMAGE_EXTENSIONS
+    # Static variables
+    South   = 0
+    East    = 1
+    North   = 2
+    West    = 3
+    Back    = 0
+    Front   = 1
+    Summer  = 0
+    Winter  = 1
+##    choicelist_anim = choicelist_anim
+    choicelist_paksize_int = choicelist_paksize_int
+    choicelist_views_int = choicelist_views_int
+    choicelist_dims_int = choicelist_dims_int
+    choicelist_dims_z_int = choicelist_dims_z_int
+    def OnInit(self):
+        """Things to do immediately after the wx.App has been created"""
+        # Load Program Options
+
+        # Create and show debug window if debugging turned on
+        
+        # Could improve debug window by only initialising the frame etc. if debugging is turned on,
+        # if it isn't then nothing gets created and calls to debug() simply log in the background
+        # Debug frame also needs a save/export control to save messages (and some way to redirect
+        # error output to the same frame)
+        
+        self.debug = debug(None, wx.ID_ANY, "Debugging", debug_on)
+        if debug_on:
+            self.debug.Show(1)
+        return True
+
+    def CheckProjectChanged(self):
+        """Check if the active project has been changed since it was saved last,
+           returns True if it's changed"""
+        if self.PickleProject(app.activeproject) == app.activepickle:
+            debug("Check Project for changes - Project Unchanged")
+            return False
+        else:
+            debug("Check Project for changes - Project Changed")
+            return True
+
+    def SaveProject(self, project, file):
+        """Save a project to the file location specified"""
+        debug("Saving project to: %s" % file)
+
+        pickle_string = self.PickleProject(project, 0)
+
+        output = open(file, "wb")
+        app.activepickle = pickle_string
+        output.write(pickle_string)
+        output.close()
+        debug("Save project success")
+
+    def NewProject(self):
+        """Replace a project with a new one"""
+        # Call init on the project, this will reset it to its defaults
+        app.activeproject = tcproject.Project()
+        app.activepickle = self.PickleProject(app.activeproject)
+        debug("Active project reset to defaults (New project)")
+
+    def LoadProject(self, file):
+        """Load project from file, replacing the current activeproject"""
+        app.activeproject = self.UnPickleProject(file)
+        app.activepickle = self.PickleProject(app.activeproject)
+        debug("Loaded project from: %s" % file)
+        debug(app.activeproject.paksize())
+
+    def PickleProject(self, project, picklemode = 0):
+        """Pickle a project, returns a pickled string"""
+        project.delImages()
+        outstring = StringIO.StringIO()
+        pickle.dump(project, outstring, picklemode)
+        pickle_string = outstring.getvalue()
+        outstring.close()
+        debug("PickleProject, object type: %s pickle type: %s" % (str(project), picklemode))
+        return pickle_string
+
+    def UnPickleProject(self, filename):
+        """Unpickle a project from file, returning a tcproject object"""
+        file = open(filename, "rb")
+        project = pickle.load(file)
+        return project
+
+    def ReloadWindow(self):
+        """Reload the main window, e.g. to effect a translation change, does not affect debugging window"""
+
+    def MainWindow(self):
+        """Create main window after intialising project and debugging etc."""
+
+        # Create a default active project
+        self.projects = {}
+        self.projects["default"] = tcproject.Project()
+        self.activeproject = self.projects["default"]
+        # Active hash is regenerated each time the project is saved, if the activeproject's current hash
+        # differs from the saved one, then we know the project has been changed since last change and so
+        # needs to be saved on new project/quit/load etc.
+        self.activepickle = app.PickleProject(app.activeproject)
+
+        # Single project implementation
+        # Only one project in the dict at a time, prompt on new project to save etc.
+        # New project -> If default changed, prompt to save, then create a new tcproject object and init frame
+        # Load project -> prompt save, prompt to load, load in project and init frame
+        # Need to write save/load routine, using pickle for data persistence
+        # Higher level function to set activeproject, so can abstract for multi-project implementation
+
+        # Create and show main frame
+        self.frame = MainWindow(None, wx.ID_ANY, "TileCutter", MAIN_WINDOW_SIZE, MAIN_WINDOW_POSITION, MAIN_WINDOW_MINSIZE)
+        self.SetTopWindow(self.frame)
+        self.frame.Bind(wx.EVT_CLOSE, self.OnQuit)
+
+
+    def OnQuit(self, e):
+        """Close the debugging window and quit the application on a quit event in the main window
+        closing the debugging window doesn't do anything"""
+        self.debug.Destroy()
+        self.frame.Destroy()
+
+# Run the program
+if __name__ == '__main__':
+    start_directory = os.getcwd()
+    # Create the application
+    app = MyApp()
+    # Create the translation manager
+    app.tctranslator = translator.Translator()
+##    sys.stderr = open("error.txt","w")
+
+    # Create the main application window
+    app.MainWindow()
+    display = app.frame.display
+    # Init all main frame controls
+    app.frame.update()
+    # Show the main window frame
+    app.frame.Show(1)
+
+    # Launch into application's main loop
+    app.MainLoop()
+    app.Destroy()
+
+
+
+
+
+

@@ -1,0 +1,107 @@
+from mercurial.repo import RepoError
+import os
+from django.conf import settings
+from vcs.lib import (RepoError, _Repo)
+from vcs.lib.types import (VCSBrowserMixin, BrowserError)
+from vcs.lib.support.git import repository, clone
+
+GIT_REPO_PATH = settings.GIT_REPO_PATH
+
+def need_repo(fn):
+    def repo_fn(self, *args, **kw):
+        try:
+            self.repo
+        except AttributeError:
+            self.init_repo()
+        return fn(self, *args, **kw)
+    return repo_fn
+
+class GitBrowser(VCSBrowserMixin):
+
+    """
+    A browser class for Git repositories.
+    
+    Git homepage: http://git.or.cz/
+
+    >>> b = GitBrowser(root='http://git.fedorahosted.org/git/elections.git',
+    ... name='test-git', branch='master')
+    >>> GitBrowser(root='foo', name='../..', branch='tip')
+    Traceback (most recent call last):
+      ...
+    AssertionError: Unit checkout path outside of nominal repo checkout path.
+    
+    """
+
+
+    def __init__(self, root, name=None, branch='master'):
+        # If name isn't given, let's take the last part of the root
+        # Eg. root = 'http://example.com/foo/baz' -> name='baz'
+        if not name:
+            name = root.split('/')[-1]
+
+        self.root = root
+        self.branch = branch
+
+        self.path = os.path.normpath(os.path.join(GIT_REPO_PATH, name))
+        #Test for possible directory traversal
+        assert os.path.commonprefix(
+            [self.path, GIT_REPO_PATH]) == GIT_REPO_PATH, (
+            "Unit checkout path outside of nominal repo checkout path.")
+
+
+    @property
+    def remote_path(self):
+        """Return remote path for cloning."""
+        return str(self.root)
+
+
+
+    def setup_repo(self):
+        """
+        Initialize repository for the first time.
+        
+        Commands used:
+        git clone <remote_path> <self.path>
+        if branch != master
+            git branch <branch> <remote_branch>
+            git co <branch>
+        
+        """
+
+        repo = clone(self.remote_path, self.path)
+
+        # Non master branches need more work:
+        if self.branch != u'master':
+            remote_branch = 'origin/%s' % self.branch
+    
+            repo.branch(self.branch, remote_branch)
+            repo.checkout(self.branch)
+        
+        return repo
+
+
+    def init_repo(self):
+        """
+        Initialize the ``repo`` variable on the browser.
+        
+        If local repo exists, use that. If not, clone it.
+        """
+        
+        try:
+            self.repo = repository(self.path)
+        except RepoError:
+            self.repo = self.setup_repo()
+
+    @need_repo
+    def update(self):
+        """
+        Fully update the local repository.
+        
+        Commands used:
+        git fetch origin
+        git reset --hard <revspec>
+        
+        """
+        revspec = 'origin/%s' % self.branch
+        self.repo.fetch('origin')
+        self.repo.reset(revspec, hard=True)

@@ -1,0 +1,5 @@
+import QuarterApplication
+import QuarterWidget
+
+QuarterApplication = QuarterApplication.QuarterApplication
+QuarterWidget = QuarterWidget.QuarterWidget

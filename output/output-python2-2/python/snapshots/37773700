@@ -1,0 +1,4 @@
+class EConnectionRestriction(Exception):
+    pass
+    
+

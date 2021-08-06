@@ -1,0 +1,894 @@
+"""
+Defines the base class for optimizations as well as a certain
+amount of useful generic optimization tools.
+"""
+
+
+import graph
+from env import InconsistencyError
+import utils
+import unify
+import toolbox
+import op
+from copy import copy
+from collections import deque, defaultdict
+import destroyhandler as dh
+import sys
+
+
+class Optimizer(object):
+    """WRITEME
+    An L{Optimizer} can be applied to an L{Env} to transform it.
+    It can represent an optimization or in general any kind
+    of transformation you could apply to an L{Env}.
+    """
+
+    def apply(self, env):
+        """WRITEME
+        Applies the optimization to the provided L{Env}. It may use all
+        the methods defined by the L{Env}. If the L{Optimizer} needs
+        to use a certain tool, such as an L{InstanceFinder}, it can do
+        so in its L{add_requirements} method.
+        """
+        pass
+
+    def optimize(self, env, *args, **kwargs):
+        """WRITEME
+        This is meant as a shortcut to::
+          opt.add_requirements(env)
+          opt.apply(env)
+        """
+        self.add_requirements(env)
+        self.apply(env, *args, **kwargs)
+
+    def __call__(self, env):
+        """WRITEME
+        Same as self.optimize(env)
+        """
+        return self.optimize(env)
+
+    def add_requirements(self, env):
+        """WRITEME
+        Add features to the env that are required to apply the optimization.
+        For example:
+          env.extend(History())
+          env.extend(MyFeature())
+          etc.
+        """
+        pass
+
+
+class FromFunctionOptimizer(Optimizer):
+    """WRITEME"""
+    def __init__(self, fn):
+        self.apply = fn
+    def add_requirements(self, env):
+        env.extend(toolbox.ReplaceValidate())
+
+def optimizer(f):
+    """WRITEME"""
+    return FromFunctionOptimizer(f)
+
+
+
+class SeqOptimizer(Optimizer, list):
+    """WRITEME
+    Takes a list of L{Optimizer} instances and applies them
+    sequentially.
+    """
+
+    def __init__(self, *opts, **kw):
+        """WRITEME"""
+        if len(opts) == 1 and isinstance(opts[0], (list, tuple)):
+            opts = opts[0]
+        self[:] = opts
+        self.failure_callback = kw.pop('failure_callback', None)
+
+    def apply(self, env):
+        """WRITEME
+        Applies each L{Optimizer} in self in turn.
+        """
+        for optimizer in self:
+            try:
+                optimizer.optimize(env)
+            except Exception, e:
+                if self.failure_callback:
+                    self.failure_callback(e, self, optimizer)
+                    continue
+                else:
+                    raise
+
+    def __eq__(self, other):
+        return id(self) == id(other)
+
+    def __neq__(self, other):
+        return id(self) != id(other)
+
+    def __hash__(self):
+        return hash(id(self))
+
+    def __str__(self):
+        return "SeqOpt(%s)" % list.__str__(self)
+
+    def __repr__(self):
+        return list.__repr__(self)
+
+
+
+class _metadict:
+    """WRITEME"""
+    # dict that accepts unhashable keys
+    # uses an associative list
+    # for internal use only
+    def __init__(self):
+        self.d = {}
+        self.l = []
+    def __getitem__(self, item):
+        return self.get(item, None)
+    def __setitem__(self, item, value):
+        try:
+            self.d[item] = value
+        except:
+            self.l.append((item, value))
+    def get(self, item, default):
+        try:
+            return self.d[item]
+        except:
+            for item2, value in self.l:
+                try:
+                    if item == item2:
+                        return value
+                    if item.equals(item2):
+                        return value
+                except:
+                    if item is item2:
+                        return value
+            else:
+                return default
+    def clear(self):
+        self.d = {}
+        self.l = []
+    def __str__(self):
+        return "(%s, %s)" % (self.d, self.l)
+
+
+class MergeOptimizer(Optimizer):
+    """WRITEME
+    Merges parts of the graph that are identical, i.e. parts that
+    take the same inputs and carry out the asme computations so we
+    can avoid doing them more than once. Also merges results that
+    are constant.
+    """
+
+    def add_requirements(self, env):
+        env.extend(toolbox.ReplaceValidate())
+
+    def apply(self, env):
+        cid = _metadict()     #result -> result.desc()  (for constants)
+        inv_cid = _metadict() #desc -> result (for constants)
+        for i, r in enumerate([r for r in env.results if isinstance(r, graph.Constant)]):
+            sig = r.signature()
+            other_r = inv_cid.get(sig, None)
+            if other_r is not None:
+                if r.name: other_r.name = r.name
+                env.replace_validate(r, other_r)
+            else:
+                cid[r] = sig
+                inv_cid[sig] = r
+        # we clear the dicts because the Constants signatures are not necessarily hashable
+        # and it's more efficient to give them an integer cid like the other Results
+        cid.clear()
+        inv_cid.clear()
+        for i, r in enumerate(r for r in env.results if r.owner is None):
+            cid[r] = i
+            inv_cid[i] = r
+
+        for node in graph.io_toposort(env.inputs, env.outputs):
+            node_cid = (node.op, tuple([cid[input] for input in node.inputs]))
+            dup = inv_cid.get(node_cid, None)
+            success = False
+            if dup is not None:
+                success = True
+                pairs = zip(node.outputs, dup.outputs)
+                for output, new_output in pairs:
+                    if output.name and not new_output.name:
+                        new_output.name = output.name
+                try:
+                    env.replace_all_validate(pairs)
+                except InconsistencyError, e:
+                    success = False
+            if not success:
+                cid[node] = node_cid
+                inv_cid[node_cid] = node
+                for i, output in enumerate(node.outputs):
+                    ref = (i, node_cid)
+                    cid[output] = ref
+                    inv_cid[ref] = output
+
+
+def MergeOptMerge(opt):
+    """WRITEME
+    Returns an Optimizer that merges the graph then applies the
+    optimizer in opt and then merges the graph again in case the
+    opt introduced additional similarities.
+    """
+    merger = MergeOptimizer()
+    return SeqOptimizer([merger, opt, merger])
+
+
+
+########################
+### Local Optimizers ###
+########################
+
+class LocalOptimizer(utils.object2):
+    """WRITEME"""
+
+    def transform(self, node):
+        raise utils.AbstractFunctionError()
+
+
+class FromFunctionLocalOptimizer(LocalOptimizer):
+    """WRITEME"""
+    def __init__(self, fn, tracks = []):
+        self.transform = fn
+        self._tracks = tracks
+    def tracks(self):
+        return self._tracks
+    def add_requirements(self, env):
+        env.extend(toolbox.ReplaceValidate())
+    def __str__(self):
+        return getattr(self, 'name', '<FromFunctionLocalOptimizer instance>')
+
+def local_optimizer(*tracks):
+    def decorator(f):
+        """WRITEME"""
+        rval = FromFunctionLocalOptimizer(f, tracks)
+        rval.__name__ = f.__name__
+        return rval
+    return decorator
+
+
+class LocalOptGroup(LocalOptimizer):
+    """WRITEME"""
+
+    def __init__(self, *optimizers):
+        self.opts = optimizers
+        self.reentrant = any(getattr(opt, 'reentrant', True) for opt in optimizers)
+        self.retains_inputs = all(getattr(opt, 'retains_inputs', False) for opt in optimizers)
+
+    def transform(self, node):
+        for opt in self.opts:
+            repl = opt.transform(node)
+            if repl:
+                return repl
+
+
+class LocalOpKeyOptGroup(LocalOptGroup):
+    """WRITEME"""
+
+    def __init__(self, optimizers):
+        if any(not hasattr(opt, 'op_key'), optimizers):
+            raise TypeError("All LocalOptimizers passed here must have an op_key method.")
+        CompositeLocalOptimizer.__init__(self, optimizers)
+    
+    def op_key(self):
+        return [opt.op_key() for opt in self.opts]
+
+
+class OpSub(LocalOptimizer):
+    """WRITEME
+    Replaces the application of a certain op by the application of
+    another op that take the same inputs as what they are replacing.
+
+    e.g. OpSub(add, sub) ==> add(div(x, y), add(y, x)) -> sub(div(x, y), sub(y, x))
+    """
+
+    reentrant = False      # an OpSub does not apply to the nodes it produces
+    retains_inputs = True  # all the inputs of the original node are transferred to the outputs
+
+    def __init__(self, op1, op2, transfer_tags = True):
+        """
+        op1.make_node and op2.make_node must take the same number of
+        inputs and have the same number of outputs.
+        """
+        self.op1 = op1
+        self.op2 = op2
+        self.transfer_tags = transfer_tags
+
+    def op_key(self):
+        return self.op1
+
+    def tracks(self):
+        return [[self.op1]]
+
+    def transform(self, node):
+        if node.op != self.op1:
+            return False
+        repl = self.op2.make_node(*node.inputs)
+        if self.transfer_tags:
+            repl.tag = copy(node.tag)
+            for output, new_output in zip(node.outputs, repl.outputs):
+                new_output.tag = copy(output.tag)
+        return repl.outputs
+
+    def str(self):
+        return "%s -> %s" % (self.op1, self.op2)
+
+
+class OpRemove(LocalOptimizer):
+    """WRITEME
+    Removes all applications of an op by transferring each of its
+    outputs to the corresponding input.
+    """
+
+    reentrant = False      # no nodes are added at all
+
+    def __init__(self, op):
+        """
+        op1.make_node and op2.make_node must take the same number of
+        inputs and have the same number of outputs.
+        """
+        self.op = op
+
+    def op_key(self):
+        return self.op
+
+    def tracks(self):
+        return [[self.op]]
+
+    def transform(self, node):
+        if node.op != self.op:
+            return False
+        return node.inputs
+
+    def str(self):
+        return "%s(x) -> x" % (self.op)
+
+
+class PatternSub(LocalOptimizer):
+    """WRITEME
+    @todo update
+    
+    Replaces all occurrences of the input pattern by the output pattern:
+
+     input_pattern ::= (op, <sub_pattern1>, <sub_pattern2>, ...)
+     input_pattern ::= dict(pattern = <input_pattern>,
+                            constraint = <constraint>)
+     sub_pattern ::= input_pattern
+     sub_pattern ::= string
+     sub_pattern ::= a Constant instance
+     constraint ::= lambda env, expr: additional matching condition
+     
+     output_pattern ::= (op, <output_pattern1>, <output_pattern2>, ...)
+     output_pattern ::= string
+
+    Each string in the input pattern is a variable that will be set to
+    whatever expression is found in its place. If the same string is
+    used more than once, the same expression must be found in those
+    places. If a string used in the input pattern is used in the
+    output pattern, the matching expression will be inserted in its
+    place. The input pattern cannot just be a string but the output
+    pattern can.
+
+    If you put a constant result in the input pattern, there will be a
+    match iff a constant result with the same value and the same type
+    is found in its place.
+
+    You can add a constraint to the match by using the dict(...)  form
+    described above with a 'constraint' key. The constraint must be a
+    function that takes the env and the current Result that we are
+    trying to match and returns True or False according to an
+    arbitrary criterion.
+
+    Examples:
+     PatternOptimizer((add, 'x', 'y'), (add, 'y', 'x'))
+     PatternOptimizer((multiply, 'x', 'x'), (square, 'x'))
+     PatternOptimizer((subtract, (add, 'x', 'y'), 'y'), 'x')
+     PatternOptimizer((power, 'x', Constant(double, 2.0)), (square, 'x'))
+     PatternOptimizer((boggle, {'pattern': 'x',
+                                'constraint': lambda env, expr: expr.type == scrabble}),
+                      (scrabble, 'x'))
+    """
+
+    def __init__(self, in_pattern, out_pattern, allow_multiple_clients = False):
+        """
+        Creates a PatternOptimizer that replaces occurrences of
+        in_pattern by occurrences of out_pattern.
+
+        If allow_multiple_clients is False, he pattern matching will
+        fail if one of the subpatterns has more than one client.
+        """
+        self.in_pattern = in_pattern
+        self.out_pattern = out_pattern
+        if isinstance(in_pattern, (list, tuple)):
+            self.op = self.in_pattern[0]
+        elif isinstance(in_pattern, dict):
+            self.op = self.in_pattern['pattern'][0]
+        else:
+            raise TypeError("The pattern to search for must start with a specific Op instance.")
+        self.__doc__ = self.__class__.__doc__ + "\n\nThis instance does: " + str(self) + "\n"
+        self.allow_multiple_clients = allow_multiple_clients
+
+    def op_key(self):
+        return self.op
+
+    def tracks(self):
+        def helper(pattern, sofar):
+            if isinstance(pattern, (list, tuple)):
+                sofar = sofar + (pattern[0],)
+                return reduce(tuple.__add__,
+                              tuple(helper(p, sofar) for p in pattern[1:]),
+                              ())
+            elif isinstance(pattern, dict):
+                return helper(pattern['pattern'], sofar)
+            else:
+                return (sofar,)
+        return set(helper(self.in_pattern, ()))
+
+    def transform(self, node):
+        """
+        Checks if the graph from node corresponds to in_pattern. If it does,
+        constructs out_pattern and performs the replacement.
+        """
+        if node.op != self.op:
+            return False
+        def match(pattern, expr, u, allow_multiple_clients = False):
+            if isinstance(pattern, (list, tuple)):
+                if expr.owner is None:
+                    return False
+                if not (expr.owner.op == pattern[0]) or (not allow_multiple_clients and len(expr.clients) > 1):
+                    return False
+                if len(pattern) - 1 != len(expr.owner.inputs):
+                    return False
+                for p, v in zip(pattern[1:], expr.owner.inputs):
+                    u = match(p, v, u, self.allow_multiple_clients)
+                    if not u:
+                        return False
+            elif isinstance(pattern, dict):
+                try:
+                    real_pattern = pattern['pattern']
+                except KeyError:
+                    raise KeyError("Malformed pattern: %s (expected key 'pattern')" % pattern)
+                constraint = pattern.get('constraint', lambda expr: True)
+                if constraint(expr):
+                    return match(real_pattern, expr, u, pattern.get('allow_multiple_clients', False))
+                else:
+                    return False
+            elif isinstance(pattern, str):
+                v = unify.Var(pattern)
+                if u[v] is not v and u[v] is not expr:
+                    return False
+                else:
+                    u = u.merge(expr, v)
+            elif isinstance(pattern, graph.Constant) and isinstance(expr, graph.Constant) and pattern.equals(expr):
+                return u
+            else:
+                return False
+            return u
+
+        def build(pattern, u):
+            if isinstance(pattern, (list, tuple)):
+                args = [build(p, u) for p in pattern[1:]]
+                return pattern[0](*args)
+            elif isinstance(pattern, str):
+                return u[unify.Var(pattern)]
+            else:
+                return pattern.clone()
+
+        u = match(self.in_pattern, node.out, unify.Unification(), True)
+        if u:
+            p = self.out_pattern
+            new = build(p, u)
+            return [new]
+        else:
+            return False
+
+    def __str__(self):
+        def pattern_to_str(pattern):
+            if isinstance(pattern, (list, tuple)):
+                return "%s(%s)" % (str(pattern[0]), ", ".join([pattern_to_str(p) for p in pattern[1:]]))
+            elif isinstance(pattern, dict):
+                return "%s subject to %s" % (pattern_to_str(pattern['pattern']), str(pattern.get('constraint', 'no conditions')))
+            else:
+                return str(pattern)
+        return "%s -> %s" % (pattern_to_str(self.in_pattern), pattern_to_str(self.out_pattern))
+
+    def __repr__(self):
+        return str(self)
+
+
+
+##################
+### Navigators ###
+##################
+
+# Use the following classes to apply LocalOptimizers
+
+
+class NavigatorOptimizer(Optimizer):
+    """WRITEME"""
+
+    def __init__(self, local_opt, ignore_newtrees = 'auto', failure_callback = None):
+        self.local_opt = local_opt
+        if ignore_newtrees == 'auto':
+            self.ignore_newtrees = not getattr(local_opt, 'reentrant', True)
+        else:
+            self.ignore_newtrees = ignore_newtrees
+        self.failure_callback = failure_callback
+
+    def attach_updater(self, env, importer, pruner, chin = None):
+        if self.ignore_newtrees:
+            importer = None
+        
+        if importer is None and pruner is None:
+            return None
+
+        class Updater:
+            if importer is not None:
+                def on_import(self, env, node):
+                    importer(node)
+            if pruner is not None:
+                def on_prune(self, env, node):
+                    pruner(node)
+            if chin is not None:
+                def on_change_input(self, env, node, i, r, new_r):
+                    chin(node, i, r, new_r)
+                    
+        u = Updater()
+        env.extend(u)
+        return u
+
+    def detach_updater(self, env, u):
+        if u is not None:
+            env.remove_feature(u)
+
+    def process_node(self, env, node, lopt = None):
+        lopt = lopt or self.local_opt
+        try:
+            replacements = lopt.transform(node)
+        except Exception, e:
+            if self.failure_callback is not None:
+                self.failure_callback(e, self, [(x, None) for x in node.outputs])
+                return False
+            else:
+                raise
+        if replacements is False or replacements is None:
+            return False
+        repl_pairs = zip(node.outputs, replacements)
+        try:
+            env.replace_all_validate(repl_pairs)
+            return True
+        except Exception, e:
+            if self.failure_callback is not None:
+                self.failure_callback(e, self, repl_pairs)
+                return False
+            else:
+                raise
+
+    def add_requirements(self, env):
+        env.extend(toolbox.ReplaceValidate())
+
+
+
+class TopoOptimizer(NavigatorOptimizer):
+    """WRITEME"""
+
+    def __init__(self, local_opt, order = 'in_to_out', ignore_newtrees = False, failure_callback = None):
+        if order not in ['out_to_in', 'in_to_out']:
+            raise ValueError("order must be 'out_to_in' or 'in_to_out'")
+        self.order = order
+        NavigatorOptimizer.__init__(self, local_opt, ignore_newtrees, failure_callback)
+
+    def apply(self, env, start_from = None):
+        if start_from is None: start_from = env.outputs
+        q = deque(graph.io_toposort(env.inputs, start_from))
+        def importer(node):
+            q.append(node)
+        def pruner(node):
+            if node is not current_node:
+                try: q.remove(node)
+                except ValueError: pass
+        
+        u = self.attach_updater(env, importer, pruner)
+        try:
+            while q:
+                if self.order == 'out_to_in':
+                    node = q.pop()
+                else:
+                    node = q.popleft()
+                current_node = node
+                self.process_node(env, node)
+        except:
+            self.detach_updater(env, u)
+            raise
+        
+
+
+class OpKeyOptimizer(NavigatorOptimizer):
+    """WRITEME"""
+
+    def __init__(self, local_opt, ignore_newtrees = False, failure_callback = None):
+        if not hasattr(local_opt, 'op_key'):
+            raise TypeError("LocalOptimizer for OpKeyOptimizer must have an 'op_key' method.")
+        NavigatorOptimizer.__init__(self, local_opt, ignore_newtrees, failure_callback)
+    
+    def apply(self, env):
+        op = self.local_opt.op_key()
+        if isinstance(op, (list, tuple)):
+            q = reduce(list.__iadd__, map(env.get_nodes, op))
+        else:
+            q = list(env.get_nodes(op))
+        def importer(node):
+            if node.op == op: q.append(node)
+        def pruner(node):
+            if node is not current_node and node.op == op:
+                try: q.remove(node)
+                except ValueError: pass
+        u = self.attach_updater(env, importer, pruner)
+        try:
+            while q:
+                node = q.pop()
+                current_node = node
+                self.process_node(env, node)
+        except:
+            self.detach_updater(env, u)
+            raise
+
+    def add_requirements(self, env):
+        """
+        Requires the following features:
+          - NodeFinder
+          - ReplaceValidate
+        """
+        NavigatorOptimizer.add_requirements(self, env)
+        env.extend(toolbox.NodeFinder())
+
+
+
+# class EquilibriumOptimizer(NavigatorOptimizer):
+#     """WRITEME"""
+
+#     def __init__(self, local_optimizers, failure_callback = None):
+#         NavigatorOptimizer.__init__(self, local_opt, ignore_newtrees, failure_callback)
+    
+#     def apply(self, env):
+#         op = self.local_opt.op_key()
+#         if isinstance(op, (list, tuple)):
+#             q = reduce(list.__iadd__, map(env.get_nodes, op))
+#         else:
+#             q = list(env.get_nodes(op))
+#         def importer(node):
+#             if node.op == op: q.append(node)
+#         def pruner(node):
+#             if node is not current_node and node.op == op:
+#                 try: q.remove(node)
+#                 except ValueError: pass
+#         u = self.attach_updater(env, importer, pruner)
+#         try:
+#             while q:
+#                 node = q.pop()
+#                 current_node = node
+#                 self.process_node(env, node)
+#         except:
+#             self.detach_updater(env, u)
+#             raise
+
+
+from utils import D
+
+class EquilibriumOptimizer(NavigatorOptimizer):
+
+    def __init__(self,
+                 local_optimizers,
+                 failure_callback = None,
+                 max_depth = None,
+                 max_use_ratio = None):
+
+        super(EquilibriumOptimizer, self).__init__(
+            None,
+            ignore_newtrees = False,
+            failure_callback = failure_callback)
+
+        self.local_optimizers = local_optimizers
+        self.max_depth = max_depth
+        self.max_use_ratio = max_use_ratio
+
+        self.tracks = defaultdict(list)
+        self.tracks0 = defaultdict(list)
+        max_depth = 0
+        for lopt in local_optimizers:
+            tracks = lopt.tracks()
+            for track in tracks:
+                max_depth = max(max_depth, len(track))
+                if self.max_depth is not None and max_depth > self.max_depth:
+                    raise ValueError('One of the local optimizers exceeds the maximal depth.')
+                for i, op in enumerate(track):
+                    if i == 0:
+                        self.tracks0[op].append((track, i, lopt))
+                    self.tracks[op].append((track, i, lopt))
+
+    def fetch_tracks(self, op):
+        return self.tracks[op] + self.tracks[None]
+
+    def fetch_tracks0(self, op):
+        return self.tracks0[op] + self.tracks0[None]
+
+    def backtrack(self, node, tasks):
+        candidates = self.fetch_tracks(node.op)
+        tracks = []
+        def filter(node, depth):
+            new_candidates = []
+            for candidate in candidates:
+                track, i, lopt = candidate
+                if i < depth:
+                    pass
+                elif track[i-depth] in (None, node.op):
+                    if i == depth:
+                        tasks[node].append(lopt)
+                    else:
+                        tracks.append(candidate)
+                else:
+                    new_candidates.append(candidate)
+            return new_candidates
+        depth = 0
+        nodes = [node]
+        while candidates:
+            for node in nodes:
+                candidates = filter(node, depth)
+            depth += 1
+            _nodes = nodes
+            nodes = reduce(list.__iadd__,
+                           [reduce(list.__iadd__,
+                                   [[n for n, i in out.clients if not isinstance(n, str)] for out in node.outputs],
+                                   []) for node in nodes],
+                           [])
+            candidates = tracks
+            tracks = []
+
+    def apply(self, env):
+        tasks = defaultdict(list)
+        
+        if self.max_use_ratio is not None:
+            max_uses = self.max_use_ratio * len(env.nodes)
+            runs = defaultdict(int)
+        else:
+            runs = None
+
+        def importer(node):
+            #print 'IMPORTING', node
+            self.backtrack(node, tasks)
+        def pruner(node):
+            try:
+                del tasks[node]
+            except KeyError:
+                pass
+        def chin(node, i, r, new_r):
+            if new_r.owner and not r.clients:
+                self.backtrack(new_r.owner, tasks)
+
+#         # == NOT IDEAL == #
+#         for node in env.nodes:
+#             importer(node)
+
+        
+        for node in env.nodes:
+            tasks[node].extend(lopt for track, i, lopt in self.fetch_tracks0(node.op))
+
+        u = self.attach_updater(env, importer, pruner, chin)
+        while tasks:
+            for node in tasks.iterkeys():
+                todo = tasks.pop(node)
+                break
+            for lopt in todo:
+                if runs is not None and runs[lopt] >= max_uses:
+                    print >>sys.stderr, 'Warning: optimization exceeded its maximal use ratio: %s, %s' % (lopt, max_uses)
+                    continue
+                success = self.process_node(env, node, lopt)
+                if success:
+                    if runs is not None: runs[lopt] += 1
+                    break
+        self.detach_updater(env, u)
+
+#     def match(self, node, candidates):
+#         candidates[:] = [candidate
+#                          for candidate in candidates
+#                          if candidate.current.op is None or candidate.current.op == node.op]
+#         for candidate in candidates:
+#             if candidate.current.inputs is not None:
+#                 for in1, in2 in zip(candidate.current.inputs, node.inputs):
+#                     if isinstance(in1, str):
+#                         candidate.match[in1] = in2
+#         for client in node.clients:
+            
+
+#         op = node.op
+#         patterns = self.pattern_base[(depth, op)].union(self.pattern_base[(depth, WILDCARD)])
+#         if not patterns:
+#             return patterns
+#         return self.match(node, depth + 1).intersection(patterns)
+
+
+#     def backtrack(self, node, q):
+#         for node2, i in node.clients:
+#             op2 = node2.op
+
+
+
+
+
+
+def keep_going(exc, nav, repl_pairs):
+    """WRITEME"""
+    print exc, nav, repl_pairs
+    pass
+
+
+#################
+### Utilities ###
+#################
+
+def _check_chain(r, chain):
+    """WRITEME"""
+    chain = list(reversed(chain))
+    while chain:
+        elem = chain.pop()
+        if elem is None:
+            if not r.owner is None:
+                return False
+        elif r.owner is None:
+            return False
+        elif isinstance(elem, op.Op):
+            if not r.owner.op == elem:
+                return False
+        else:
+            try:
+                if issubclass(elem, op.Op) and not isinstance(r.owner.op, elem):
+                    return False
+            except TypeError:
+                return False
+        if chain:
+            r = r.owner.inputs[chain.pop()]
+    return r
+
+def check_chain(r, *chain):
+    """WRITEME"""
+    if isinstance(r, graph.Apply):
+        r = r.outputs[0]
+    return _check_chain(r, reduce(list.__iadd__, ([x, 0] for x in chain)))
+
+
+
+
+
+############
+### Misc ###
+############
+
+class InplaceOptimizer(Optimizer):
+
+    def __init__(self, inplace):
+        self.inplace = inplace
+
+    def apply(self, env):
+        self.inplace(env)
+
+    def add_requirements(self, env):
+        env.extend(dh.DestroyHandler())
+
+
+class PureThenInplaceOptimizer(Optimizer):
+
+    def __init__(self, pure, inplace):
+        self.pure = pure
+        self.inplace = inplace
+
+    def apply(self, env):
+        self.pure(env)
+        env.extend(dh.DestroyHandler())
+        self.inplace(env)
+
+
+
+
+

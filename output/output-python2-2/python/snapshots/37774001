@@ -1,0 +1,1 @@
+from Gtk import GtkCanvas

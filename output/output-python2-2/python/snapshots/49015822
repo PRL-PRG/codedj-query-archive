@@ -1,0 +1,77 @@
+# Orca
+#
+# Copyright 2006 Sun Microsystems Inc.
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Library General Public
+# License as published by the Free Software Foundation; either
+# version 2 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Library General Public License for more details.
+#
+# You should have received a copy of the GNU Library General Public
+# License along with this library; if not, write to the
+# Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+# Boston, MA 02111-1307, USA.
+
+"""Exposes a dictionary, pronunciation_dict, that maps words to what
+they sound like."""
+
+__id__        = "$Id: pronunciation_dict.py 2665 2007-08-17 15:08:50Z richb $"
+__version__   = "$Revision: 2665 $"
+__date__      = "$Date: 2007-08-17 11:08:50 -0400 (Fri, 17 Aug 2007) $"
+__copyright__ = "Copyright (c) 2006 Sun Microsystems Inc."
+__license__   = "LGPL"
+
+from orca_i18n import _ # for gettext support
+
+def getPronunciation(word, pronunciations=None):
+    """Given a word, return a string that represents what this word
+    sounds like.
+
+    Arguments:
+    - word: the word to get the "sounds like" representation for.
+    - pronunciations: an optional dictionary used to get the pronunciation
+      from.
+
+    Returns a string that represents what this word sounds like, or 
+    the word if there is no representation.
+    """
+
+    if isinstance(word, unicode):
+        word = word.encode("UTF-8")
+
+    try:
+        lowerWord = word.decode("UTF-8").lower().encode("UTF-8")
+        if pronunciations != None:
+            return pronunciations[lowerWord][1]
+        else:
+            return pronunciation_dict[lowerWord][1]
+    except:
+        return word
+
+def setPronunciation(word, replacementString, pronunciations=None):
+    """Given an actual word, and a replacement string, set a key/value
+    pair in a pronunciation dictionary.
+
+    Arguments:
+    - word: the word to be pronunced.
+    - replacementString: the replacement string to use instead.
+    - pronunciations: an optional dictionary used to set the pronunciation
+      into.
+    """
+
+    key = word.decode("UTF-8").lower().encode("UTF-8")
+    if pronunciations != None:
+        pronunciations[key] = [ word, replacementString ]
+    else:
+        pronunciation_dict[key] = [ word, replacementString ]
+
+# pronunciation_dict is a dictionary where the keys are words and the
+# values represent word the pronunciation of that word (in other words,
+# what the word sounds like).
+#
+pronunciation_dict = {}

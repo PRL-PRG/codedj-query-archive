@@ -1,0 +1,1 @@
+../casp7/python/alignfile_replacenames.py

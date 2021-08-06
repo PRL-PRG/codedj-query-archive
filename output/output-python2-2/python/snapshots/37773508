@@ -1,0 +1,1 @@
+from Clipboard import CClipboard

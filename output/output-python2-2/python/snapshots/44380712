@@ -1,0 +1,127 @@
+# plotwindow.py
+# the main window for showing plots
+ 
+#    Copyright (C) 2004 Jeremy S. Sanders
+#    Email: Jeremy Sanders <jeremy@jeremysanders.net>
+#
+#    This program is free software; you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation; either version 2 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program; if not, write to the Free Software
+#    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+##############################################################################
+
+# $Id$
+
+import qt
+
+import utils
+
+# FIXME: this needs to be set somewhere when installed
+_logolocation='images/logo.png'
+
+class PlotWindow( qt.QScrollView ):
+    """Class to show the plot(s) in a scrollable window."""
+    
+    def __init__(self, document, *args):
+        """Initialise the window."""
+
+        qt.QScrollView.__init__(self, *args)
+        self.viewport().setBackgroundMode( qt.Qt.NoBackground )
+
+        # set up so if document is modified we are notified
+        self.document = document
+        self.connect( self.document, qt.PYSIGNAL("sigModified"),
+                      self.slotModifiedDoc )
+        self.modified = True
+        self.connect( self.document, qt.PYSIGNAL("sigResize"),
+                      self.slotResizeDoc )
+
+        # set inital size
+        self.setOutputSize( *document.getSize() )
+
+    def setOutputSize(self, xwidth, ywidth ):
+        """Set the ouput display size."""
+
+        self.realsize = (xwidth, ywidth)
+
+        # convert distances into pixels
+        painter = qt.QPainter( self )
+        self.size = utils.cnvtDists( self.realsize, painter )
+        painter.end()
+
+        # make new buffer and resize widget
+        self.bufferpixmap = qt.QPixmap( *self.size )
+        self.resizeContents( *self.size )
+
+    def slotModifiedDoc(self, ismodified):
+        """Called when the document has been modified."""
+
+        if ismodified:
+            self.modified = True
+            # repaint window without redrawing background
+            self.updateContents()
+
+    def slotResizeDoc(self, width, height):
+        """Called when the document is resized."""
+        self.setOutputSize( pwidth, pheight )
+        self.slotModifiedDoc( True )
+
+    def drawLogo(self, painter):
+        """Draw the Veusz logo in centre of window."""
+
+        logo = qt.QPixmap( _logolocation )
+        painter.drawPixmap( self.visibleWidth()/2 - logo.width()/2,
+                            self.visibleHeight()/2 - logo.height()/2,
+                            logo )
+
+    def drawContents(self, painter, clipx=0, clipy=0, clipw=-1, cliph=-1):
+        """Called when the contents need repainting."""
+
+        widget = self.document.getBaseWidget()
+
+        # draw data into background pixmap if modified
+        if self.modified:
+            
+            # fill pixmap with proper background colour
+            self.bufferpixmap.fill( self.colorGroup().base() )
+
+            # make a QPainter to draw into the buffer pixmap
+            p = qt.QPainter( self.bufferpixmap )
+
+            # draw the data into the buffer
+            self.document.printTo( self.bufferpixmap )
+
+            self.modified = False
+
+        # blt the visible part of the pixmap into the image
+        painter.drawPixmap(clipx, clipy, self.bufferpixmap,
+                           clipx, clipy, clipw, cliph)
+
+        # annoyingly we have to draw the surrounding grey ourselves
+        dim = ( self.contentsX(), self.contentsY(),
+                self.visibleWidth(), self.visibleHeight() )
+
+        if dim[0]+dim[2] > self.size[0]:
+            painter.fillRect(self.size[0], dim[1],
+                             dim[0]+dim[2]-self.size[0], dim[3],
+                             qt.QBrush( self.colorGroup().dark() ))
+
+        if dim[1]+dim[3] > self.size[1]:
+            painter.fillRect(dim[0], self.size[1],
+                             dim[2], dim[1]+dim[3]-self.size[1],
+                             qt.QBrush( self.colorGroup().dark() ))
+
+        # add logo if no children
+        if len(widget.getChildren()) == 0:
+            self.drawLogo(painter)
+        
+        

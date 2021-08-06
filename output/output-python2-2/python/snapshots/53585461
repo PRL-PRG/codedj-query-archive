@@ -1,0 +1,868 @@
+from cctbx import uctbx
+from cctbx import sgtbx
+from cctbx import adptbx
+from cctbx import maptbx
+from cctbx import eltbx
+from cctbx import crystal
+import cctbx.crystal.direct_space_asu
+from cctbx import xray
+from cctbx import math_module
+from cctbx.array_family import flex
+from libtbx.test_utils import approx_equal
+import pickle
+
+def exercise_conversions():
+  d = flex.double((10,-1))
+  s = flex.double((1,2))
+  r = xray.array_f_sq_as_f(d, s)
+  r = xray.array_f_sq_as_f(d, s, 1.e-6)
+  assert approx_equal(tuple(r.f), (3.1622777, 0))
+  assert approx_equal(tuple(r.sigma_f), (0.1543471, 1.4142136))
+  r = xray.array_f_sq_as_f(d)
+  assert approx_equal(tuple(r.f), (3.1622777, 0))
+  assert r.sigma_f.size() == 0
+  r = xray.array_f_as_f_sq(d, s)
+  assert approx_equal(tuple(r.f_sq), (100, 1))
+  assert approx_equal(tuple(r.sigma_f_sq), (20, -4))
+  r = xray.array_f_as_f_sq(d)
+  assert approx_equal(tuple(r.f_sq), (100, 1))
+  assert r.sigma_f_sq.size() == 0
+
+def exercise_gradient_flags():
+  f = xray.ext.gradient_flags(False, True, False, True, False, True, False)
+  assert not f.site
+  assert f.u_iso
+  assert not f.u_aniso
+  assert f.occupancy
+  assert not f.fp
+  assert f.fdp
+  f.site = True
+  f.u_iso = False
+  f.u_aniso = True
+  f.occupancy = False
+  f.fp = True
+  f.fdp = False
+  assert f.site
+  assert not f.u_iso
+  assert f.u_aniso
+  assert not f.occupancy
+  assert f.fp
+  assert not f.fdp
+  c = xray.ext.gradient_flags(f)
+  assert c.site
+  assert not c.u_iso
+  assert c.u_aniso
+  assert not c.occupancy
+  assert c.fp
+  assert not c.fdp
+  assert not f.all_false()
+  assert xray.ext.gradient_flags(
+    False, False, False, False, False, False, False).all_false()
+  f.u_iso = True
+  assert f.adjust(False).u_iso == True
+  assert f.adjust(True).u_iso == False
+  assert f.adjust(False).u_aniso == False
+  assert f.adjust(True).u_aniso == True
+
+def exercise_xray_scatterer():
+  x = xray.scatterer("a", (0.1,0.2,0.3), 0.25, 0.9, "const", 0, 0)
+  assert x.label == "a"
+  x.label = "b"
+  assert x.label == "b"
+  assert x.scattering_type == "const"
+  x.scattering_type = "Si"
+  assert x.scattering_type == "Si"
+  assert x.fp == 0
+  assert x.fdp == 0
+  x.fp = 1
+  assert x.fp == 1
+  x.fdp = 2
+  assert x.fdp == 2
+  assert approx_equal(x.site, (0.1,0.2,0.3))
+  x.site = (0.3,-0.4,0.5)
+  assert approx_equal(x.site, (0.3,-0.4,0.5))
+  assert approx_equal(x.occupancy, 0.9)
+  x.occupancy = 0.3
+  assert approx_equal(x.occupancy, 0.3)
+  assert not x.anisotropic_flag
+  assert approx_equal(x.u_iso, 0.25)
+  x.u_iso = 0.52
+  assert approx_equal(x.u_iso, 0.52)
+  x = xray.scatterer("a", (0.1,0.2,0.3), (1,2,3,4,5,6), 0.9, "const", 0, 0)
+  assert x.anisotropic_flag
+  assert approx_equal(x.u_star, (1,2,3,4,5,6))
+  x.u_star = (3,2,1,6,5,4)
+  assert approx_equal(x.u_star, (3,2,1,6,5,4))
+  x.anisotropic_flag = 0
+  assert not x.anisotropic_flag
+  x = xray.scatterer(
+    "si1", site=(0.01,0.02,0.3), occupancy=0.9, u=(0.3, 0.3, 0.2, 0,0,0))
+  assert x.scattering_type == "Si"
+  uc = uctbx.unit_cell((10, 10, 13))
+  sg = sgtbx.space_group_info("P 4")
+  ss = x.apply_symmetry(unit_cell=uc, space_group=sg.group())
+  assert x.multiplicity() == 1
+  assert approx_equal(x.weight_without_occupancy(), 1/4.)
+  assert approx_equal(x.weight(), 0.9/4.)
+  assert approx_equal(x.site, (0,0,0.3))
+  assert ss.multiplicity() == x.multiplicity()
+  x.occupancy = 0.8
+  assert approx_equal(x.weight(), 0.8/4.)
+  u_cart = (0.3354, 0.3771, 0.4874, -0.05161, 0.026763, -0.02116)
+  x.u_star = adptbx.u_cart_as_u_star(uc, u_cart)
+  x.anisotropic_flag = 1
+  try:
+    x.apply_symmetry(uc, sg.group(), u_star_tolerance=0.1)
+  except RuntimeError, e:
+    assert str(e).find("is_compatible_u_star") > 0
+  else:
+    raise AssertionError("Exception expected.")
+  x.apply_symmetry(unit_cell=uc, site_symmetry_ops=ss)
+  x.apply_symmetry(unit_cell=uc, site_symmetry_ops=ss, u_star_tolerance=0.5)
+  x.apply_symmetry(unit_cell=uc, site_symmetry_ops=ss, u_star_tolerance=0.5,
+    assert_min_distance_sym_equiv=0)
+  ss = x.apply_symmetry(uc, sg.group(), 0.5, 0)
+  ss = x.apply_symmetry(uc, sg.group(), 0.5, 0, 0)
+  ss = x.apply_symmetry(
+    unit_cell=uc,
+    space_group=sg.group(),
+    min_distance_sym_equiv=0.5,
+    u_star_tolerance=0,
+    assert_min_distance_sym_equiv=False)
+  assert ss.is_compatible_u_star(x.u_star)
+  assert approx_equal(x.u_star, (0.0035625, 0.0035625, 0.002884, 0, 0, 0))
+  site = (0.2,0.5,0.4)
+  x.apply_symmetry_site(ss)
+  assert approx_equal(x.site, (0,0,0.3))
+  x.u_star = (1,2,3,4,5,6)
+  x.apply_symmetry_u_star(
+    unit_cell=uc,
+    site_symmetry_ops=ss,
+    u_star_tolerance=0)
+  assert approx_equal(x.u_star, (1.5,1.5,3.0,0,0,0))
+  x.site = (0.2,0.5,0.4)
+  ss = x.apply_symmetry(uc, sg.group(), 1.e-10, 0)
+  assert ss.is_point_group_1()
+  x.u_star = (1,2,3,4,5,6)
+  assert not x.is_positive_definite_u(unit_cell=uc)
+  assert not x.is_positive_definite_u(unit_cell=uc, u_cart_tolerance=1.e2)
+  assert x.is_positive_definite_u(unit_cell=uc, u_cart_tolerance=1.e3)
+  x.tidy_u(unit_cell=uc, site_symmetry_ops=ss, u_min=0)
+  assert approx_equal(x.u_star,
+    (3.3379643647809192, 4.5640522609325131, 4.4690204772593507,
+     3.9031581835726965, 3.8623090371651934, 4.5162864184404032))
+  x.tidy_u(unit_cell=uc, site_symmetry_ops=ss, u_min=1)
+  assert approx_equal(x.u_star,
+    (3.3458045216665266, 4.5710990727698393, 4.4720459395534728,
+     3.9006326295505751, 3.8598099147456764, 4.5133641373560351))
+  assert x.is_positive_definite_u(unit_cell=uc)
+  y = x.customized_copy(u=-1)
+  assert not y.anisotropic_flag
+  assert approx_equal(y.u_iso, -1)
+  assert not y.is_positive_definite_u(unit_cell=uc)
+  assert not y.is_positive_definite_u(unit_cell=uc, u_cart_tolerance=0.5)
+  assert y.is_positive_definite_u(unit_cell=uc, u_cart_tolerance=2)
+  a = flex.xray_scatterer([x,y])
+  assert list(xray.is_positive_definite_u(
+    scatterers=a, unit_cell=uc)) == [True, False]
+  a = flex.xray_scatterer([y,x])
+  assert list(xray.is_positive_definite_u(
+    scatterers=a, unit_cell=uc)) == [False, True]
+  assert list(xray.is_positive_definite_u(
+    scatterers=a, unit_cell=uc, u_cart_tolerance=2)) == [True, True]
+  y.tidy_u(unit_cell=uc, site_symmetry_ops=ss, u_min=1)
+  assert approx_equal(y.u_iso, 1)
+  assert y.is_positive_definite_u(unit_cell=uc)
+  x_u_star_orig = x.u_star
+  x.shift_u(unit_cell=uc, u_shift=10)
+  assert approx_equal(x.u_star,
+    (3.4458045216665267, 4.6710990727698389, 4.5312175371866088,
+     3.9006326295505751, 3.8598099147456764, 4.5133641373560351))
+  y.shift_u(unit_cell=uc, u_shift=10)
+  assert approx_equal(y.u_iso, 11)
+  a = flex.xray_scatterer([x,y])
+  xray.shift_us(scatterers=a, unit_cell=uc, u_shift=-10)
+  assert approx_equal(a[0].u_star, x_u_star_orig)
+  assert approx_equal(a[1].u_iso, 1)
+
+def exercise_rotate():
+  uc = uctbx.unit_cell((10, 10, 13))
+  s = flex.xray_scatterer((xray.scatterer("Si1", site=(0.01,0.02,0.3)),))
+  r = xray.rotate(
+    unit_cell=uc,
+    rotation_matrix=((1,0,0, 0,1,0, 0,0,1)),
+    scatterers=s)
+  assert r.size() == 1
+  assert approx_equal(s[0].site, r[0].site)
+  r = xray.rotate(
+    unit_cell=uc,
+    rotation_matrix=((0,-1,0, -1,0,0, 0,0,-1)),
+    scatterers=s)
+  assert approx_equal(r[0].site, (-0.02,-0.01,-0.3))
+
+def exercise_scattering_dictionary():
+  sd = xray.scattering_dictionary()
+  assert sd.n_scatterers() == 0
+  assert sd.dict_size() == 0
+  assert len(sd.dict()) == 0
+  scatterers = flex.xray_scatterer((
+    xray.scatterer("Si1"),
+    xray.scatterer("Si2"),
+    xray.scatterer("O1"),
+    xray.scatterer("O2"),
+    xray.scatterer("Al1"),
+    xray.scatterer("O3"),
+    xray.scatterer("Al2"),
+    xray.scatterer("const", scattering_type="const"),
+    xray.scatterer("custom", scattering_type="custom")))
+  sd = xray.scattering_dictionary(scatterers)
+  assert sd.n_scatterers() == 9
+  assert sd.dict_size() == 5
+  sd_dict = sd.dict()
+  assert len(sd_dict) == 5
+  all_keys = sd_dict.keys()
+  all_keys.sort()
+  assert all_keys == ["Al", "O", "Si", "const", "custom"]
+  for k,v in sd_dict.items():
+    if   (k == "Si"): assert tuple(v.member_indices) == (0,1)
+    elif (k == "O"): assert tuple(v.member_indices) == (2,3,5)
+    elif (k == "Al"): assert tuple(v.member_indices) == (4,6)
+    elif (k == "const"): assert tuple(v.member_indices) == (7,)
+    elif (k == "custom"): assert tuple(v.member_indices) == (8,)
+    assert v.gaussian.n_terms() == 0
+    assert v.gaussian.c() == 0
+    assert tuple(sd.lookup(k).member_indices) == tuple(v.member_indices)
+  z = list(sd.find_undefined())
+  z.sort()
+  assert z == all_keys
+  p = list(sd.scatterer_permutation())
+  p.sort()
+  assert p == range(9)
+  for table,n_terms in (("IT1992",4), ("WK1995",5)):
+    sd = xray.scattering_dictionary(scatterers)
+    sd.assign("const", eltbx.xray_scattering.gaussian(10))
+    sd.assign("custom", eltbx.xray_scattering.gaussian((1,2),(3,4),5))
+    sd.assign_from_table(table)
+    for k,v in sd.dict().items():
+      if (k in ("Al", "O", "Si")):
+        assert v.gaussian.n_terms() == n_terms
+      elif (k == "const"):
+        assert v.gaussian.n_terms() == 0
+        assert approx_equal(v.gaussian.c(), 10)
+      else:
+        assert v.gaussian.n_terms() == 2
+        assert approx_equal(v.gaussian.c(), 5)
+    sd.assign("Al", eltbx.xray_scattering.gaussian(20))
+    assert approx_equal(sd.lookup("Al").gaussian.c(), 20)
+  assert sd.find_undefined().size() == 0
+  g = sd.dict()["custom"]
+  c = g.gaussian
+  assert c.n_terms() == 2
+  assert approx_equal(c.array_of_a(), (1,2))
+  assert approx_equal(c.array_of_b(), (3,4))
+  assert approx_equal(c.c(), 5)
+  assert tuple(g.member_indices) == (8,)
+  s = pickle.dumps(g)
+  l = pickle.loads(s)
+  c = l.gaussian
+  assert c.n_terms() == 2
+  assert approx_equal(c.array_of_a(), (1,2))
+  assert approx_equal(c.array_of_b(), (3,4))
+  assert approx_equal(c.c(), 5)
+  assert tuple(l.member_indices) == (8,)
+  s = pickle.dumps(sd)
+  l = pickle.loads(s)
+  l_dict = l.dict()
+  for k,v in sd.dict().items():
+    w = l_dict[k]
+    assert tuple(v.member_indices) == tuple(w.member_indices)
+    vc = v.gaussian
+    wc = w.gaussian
+    assert vc.array_of_a() == wc.array_of_a()
+    assert vc.array_of_b() == wc.array_of_b()
+    assert vc.c() == wc.c()
+  try:
+    sd.lookup("undef")
+  except RuntimeError, e:
+    assert str(e).startswith(
+      "cctbx Error: Label not in scattering dictionary: ")
+  else:
+    raise RuntimeError("Exception expected.")
+
+def exercise_structure_factors():
+  uc = uctbx.unit_cell((10, 10, 13))
+  sg = sgtbx.space_group_info("P 4")
+  scatterers = flex.xray_scatterer((
+    xray.scatterer("Si1", site=(0.01,0.02,0.3)),
+    xray.scatterer("O1", site=(0.3,0.4,0.5), u=(0.4,0.5,0.6,-.05,0.2,-0.02))))
+  for s in scatterers:
+    assert s.multiplicity() == 0
+  assert xray.n_undefined_multiplicities(scatterers) == 2
+  site_symmetry_table = sgtbx.site_symmetry_table()
+  xray.add_scatterers_ext(
+    unit_cell=uc,
+    space_group=sg.group(),
+    scatterers=scatterers,
+    site_symmetry_table=site_symmetry_table,
+    site_symmetry_table_for_new=sgtbx.site_symmetry_table(),
+    min_distance_sym_equiv=0.5,
+    u_star_tolerance=0,
+    assert_min_distance_sym_equiv=True)
+  assert list(site_symmetry_table.special_position_indices()) == [0]
+  xray.tidy_us(
+    scatterers=scatterers,
+    unit_cell=uc,
+    site_symmetry_table=site_symmetry_table,
+    u_min=0)
+  assert approx_equal(scatterers[0].u_iso, 0)
+  assert approx_equal(scatterers[1].u_star, (0.4,0.5,0.6,-.05,0.2,-0.02))
+  for s in scatterers:
+    assert s.multiplicity() != 0
+  assert xray.n_undefined_multiplicities(scatterers) == 0
+  mi = flex.miller_index(((1,2,3), (2,3,4)))
+  scattering_dict = xray.ext.scattering_dictionary(scatterers)
+  scattering_dict.assign_from_table("WK1995")
+  for sf in (xray.ext.structure_factors_simple,
+             xray.ext.structure_factors_direct):
+    fc = sf(uc, sg.group(), mi, scatterers, scattering_dict).f_calc()
+    a = flex.abs(fc)
+    p = flex.arg(fc, 1)
+    assert approx_equal(tuple(a), (10.50871, 9.049631))
+    assert approx_equal(tuple(p), (-36, 72))
+  xray.tidy_us(
+    scatterers=scatterers,
+    unit_cell=uc,
+    site_symmetry_table=site_symmetry_table,
+    u_min=100)
+  assert approx_equal(scatterers[0].u_iso, 100)
+  assert approx_equal(scatterers[1].u_star,
+    (1.0134539945616343, 1.0005190241807682, 0.64980451464405997,
+     -0.0026425269166861672, 0.027955730692513142, -0.0054908429234285239))
+  xray.ext.structure_factors_direct(
+    math_module.cos_sin_table(12),
+    uc, sg.group(), mi, scatterers, scattering_dict).f_calc()
+  xray.ext.structure_factors_gradients_direct(
+    uc, sg.group(), mi, scatterers, None, scattering_dict,
+    flex.complex_double(mi.size()),
+    xray.ext.gradient_flags(True, True, True, True, True, True, False),
+    0)
+  xray.ext.structure_factors_gradients_direct(
+    math_module.cos_sin_table(12),
+    uc, sg.group(), mi, scatterers, None, scattering_dict,
+    flex.complex_double(mi.size()),
+    xray.ext.gradient_flags(True, True, True, True, True, True, False),
+    0)
+
+def exercise_targets():
+  f_obs = flex.double((1,2,3,4,5))
+  w = flex.double((1,1,1,1,1))
+  f_calc = flex.complex_double((1,2,3,4,5))
+  ls = xray.targets_least_squares_residual(f_obs, w, f_calc)
+  assert approx_equal(ls.scale_factor(), 1)
+  assert approx_equal(ls.target(), 0)
+  assert ls.derivatives().size() == 0
+  ls = xray.targets_least_squares_residual(f_obs, w, f_calc, True)
+  assert approx_equal(ls.scale_factor(), 1)
+  assert approx_equal(ls.target(), 0)
+  assert approx_equal(tuple(ls.derivatives()), (0j,0j,0j,0j,0j))
+  ls = xray.targets_least_squares_residual(f_obs, w, f_calc, False, 3)
+  assert approx_equal(ls.scale_factor(), 3)
+  assert approx_equal(ls.target(), 4)
+  assert ls.derivatives().size() == 0
+  ls = xray.targets_least_squares_residual(f_obs, f_calc)
+  assert approx_equal(ls.scale_factor(), 1)
+  assert approx_equal(ls.target(), 0)
+  assert ls.derivatives().size() == 0
+  f_calc = flex.complex_double((10,20,30,40,50))
+  ls = xray.targets_least_squares_residual(f_obs, f_calc, True)
+  assert approx_equal(ls.scale_factor(), 1/10.)
+  assert approx_equal(ls.target(), 0)
+  assert approx_equal(tuple(ls.derivatives()), (0j,0j,0j,0j,0j))
+  ls = xray.targets_least_squares_residual(f_obs, f_calc, False, 3/10.)
+  assert approx_equal(ls.scale_factor(), 3/10.)
+  assert approx_equal(ls.target(), 4)
+  assert ls.derivatives().size() == 0
+  f_calc = flex.complex_double((1+2j,3+4j,-1-2j,5-4j,-5+6j))
+  w = flex.double((1,2,3,2,4))
+  ls = xray.targets_least_squares_residual(f_obs, w, f_calc, True)
+  assert approx_equal(ls.scale_factor(), 0.6307845)
+  assert approx_equal(ls.target(), 0.06211855)
+  assert approx_equal(tuple(ls.derivatives()), (
+    (0.0013784963-0.002756992j), (0.0103982354-0.013864313j),
+    (0.0160141831-0.032028366j), (0.0004572786+0.000365822j),
+    (0.0014117387+0.001694086j)))
+  f_obs = flex.double((1,2,3,4,5))
+  w = flex.int((1,1,1,1,1))
+  f_calc = flex.complex_double((1,2,3,4,5))
+  ic = xray.targets_intensity_correlation(f_obs, w, f_calc)
+  assert approx_equal(ic.correlation(), 1)
+  assert approx_equal(ic.target(), 0)
+  assert ic.derivatives().size() == 0
+  ic = xray.targets_intensity_correlation(f_obs, w, f_calc, True)
+  assert approx_equal(ic.correlation(), 1)
+  assert approx_equal(ic.target(), 0)
+  assert approx_equal(tuple(ic.derivatives()), (0j,0j,0j,0j,0j))
+  ic = xray.targets_intensity_correlation(f_obs, f_calc)
+  assert approx_equal(ic.correlation(), 1)
+  assert approx_equal(ic.target(), 0)
+  assert ic.derivatives().size() == 0
+  f_calc = flex.complex_double((10,20,30,40,50))
+  ic = xray.targets_intensity_correlation(f_obs, f_calc, True)
+  assert approx_equal(ic.correlation(), 1)
+  assert approx_equal(ic.target(), 0)
+  assert approx_equal(tuple(ic.derivatives()), (0j,0j,0j,0j,0j))
+  f_calc = flex.complex_double((1+2j,3+4j,-1-2j,5-4j,-5+6j))
+  w = flex.int((1,2,3,2,4))
+  ic = xray.targets_intensity_correlation(f_obs, w, f_calc, True)
+  assert approx_equal(ic.correlation(), 0.8932460)
+  assert approx_equal(ic.target(), 1-ic.correlation())
+  assert approx_equal(tuple(ic.derivatives()), (
+    (0.002855645-0.005711291j), (0.035410006-0.047213342j),
+    (0.010851453-0.021702907j), (0.005711291+0.004569033j),
+    (0.024748929+0.029698715j)))
+
+def exercise_sampled_model_density():
+  assert approx_equal(xray.calc_u_base(2, 1./3), 0.1350949)
+  uc = uctbx.unit_cell((20, 20, 23))
+  sg = sgtbx.space_group_info("P 4")
+  scatterers = flex.xray_scatterer((
+    xray.scatterer("Si1", site=(0.01,0.02,0.3), fp=-1, fdp=2),
+    xray.scatterer("O1", site=(0.3,0.4,0.5),
+                   u=adptbx.u_cart_as_u_star(uc,
+                     (0.04,0.05,0.06,-.005,0.02,-0.002)))))
+  for scatterer in scatterers:
+    scatterer.apply_symmetry(uc, sg.group())
+  scattering_dict = xray.ext.scattering_dictionary(scatterers)
+  scattering_dict.assign_from_table("WK1995")
+  d = xray.sampled_model_density(
+    unit_cell=uc,
+    scatterers=scatterers,
+    scattering_dict=scattering_dict,
+    fft_n_real=(20,20,22),
+    fft_m_real=(20,20,23))
+  assert d.unit_cell().is_similar_to(uc)
+  assert approx_equal(d.u_base(), 0.25)
+  assert approx_equal(d.u_extra(), 0.25)
+  assert approx_equal(d.u_min(), 0)
+  assert approx_equal(d.ave_u_iso_or_equiv(), 0.025)
+  assert approx_equal(d.wing_cutoff(), 1.e-3)
+  assert approx_equal(d.exp_table_one_over_step_size(), -100)
+  assert approx_equal(d.tolerance_positive_definite(), 1.e-5)
+  assert d.n_scatterers_passed() == 2
+  assert d.n_contributing_scatterers() == 2
+  assert d.n_anomalous_scatterers() == 1
+  assert d.anomalous_flag()
+  assert d.real_map().size() == 0
+  assert d.complex_map().size() == (20*20*22)
+  assert d.exp_table_size() == 2834
+  assert d.max_sampling_box_n_points() == 180
+  assert d.sum_sampling_box_n_points() == 305
+  assert approx_equal(d.ave_sampling_box_n_points(), 305/2.)
+  assert d.max_sampling_box_edges() == (5,6,6)
+  assert approx_equal(d.max_sampling_box_edges_frac(), (5/20.,6/20.,6/22.))
+  i = flex.miller_index(((1,2,3), (2,3,4)))
+  f = flex.complex_double((1+2j, 2+3j))
+  d.eliminate_u_extra_and_normalize(i, f)
+  f_orig = f.deep_copy()
+  xray.apply_u_extra(d.unit_cell(), 0.2, i, f)
+  f_elim = f.deep_copy()
+  xray.apply_u_extra(d.unit_cell(), -0.2, i, f, 1)
+  assert approx_equal(f, f_orig)
+  m = flex.double((1,2))
+  xray.apply_u_extra(d.unit_cell(), 0.2, i, f, m)
+  assert approx_equal(f[0], f_elim[0])
+  assert approx_equal(f[1], f_elim[1]*2)
+  m = flex.double((1,1/2.))
+  xray.apply_u_extra(d.unit_cell(), -0.2, i, f, m)
+  assert approx_equal(f, f_orig)
+
+def exercise_minimization_apply_shifts():
+  uc = uctbx.unit_cell((20, 20, 23))
+  scatterers = flex.xray_scatterer((
+    xray.scatterer("Si1", site=(0.01,0.02,0.3), fp=-1, fdp=2),
+    xray.scatterer("O1", site=(0.3,0.4,0.5),
+                   u=adptbx.u_cart_as_u_star(uc,
+                     (0.04,0.05,0.06,-.005,0.02,-0.002)))))
+  f = xray.ext.gradient_flags(True, True, True, True, True, True, False)
+  shifts = flex.double(19, 0.001)
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    uc, scatterers, f, shifts).shifted_scatterers
+  for a,b in zip(scatterers, shifted_scatterers):
+    assert a.scattering_type == b.scattering_type
+    assert a.site != b.site
+    if (not a.anisotropic_flag):
+      assert a.u_iso != b.u_iso
+      assert approx_equal(a.u_star, b.u_star)
+    else:
+      assert a.u_iso == b.u_iso
+      assert not approx_equal(a.u_star, b.u_star)
+    assert a.occupancy != b.occupancy
+    assert a.fp != b.fp
+    assert a.fdp != b.fdp
+  shifts = flex.double(19, -0.001)
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    unit_cell=uc,
+    scatterers=shifted_scatterers,
+    gradient_flags=f,
+    shifts=shifts).shifted_scatterers
+  for a,b in zip(scatterers, shifted_scatterers):
+    assert a.scattering_type == b.scattering_type
+    assert approx_equal(a.site, b.site)
+    assert approx_equal(a.u_iso, b.u_iso)
+    assert approx_equal(a.u_star, b.u_star)
+    assert approx_equal(a.occupancy, b.occupancy)
+    assert approx_equal(a.fp, b.fp)
+    assert approx_equal(a.fdp, b.fdp)
+  f = xray.ext.gradient_flags(True, False, False, False, False, False, False)
+  shifts = flex.double((-1,2,-3,4,-5,-6))
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    uc, scatterers, f, shifts).shifted_scatterers
+  assert approx_equal(
+    shifted_scatterers[0].site,
+    (0.01-1/20.,0.02+2/20.,0.3-3/23.))
+  assert approx_equal(
+    shifted_scatterers[1].site,
+    (0.3+4/20.,0.4-5/20.,0.5-6/23.))
+  f = xray.ext.gradient_flags(False, True, False, False, False, False, False)
+  shifts = flex.double(1, -10)
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    uc, scatterers, f, shifts).shifted_scatterers
+  assert approx_equal(shifted_scatterers[0].u_iso, -10)
+  f = xray.ext.gradient_flags(False, False, True, False, False, False, False)
+  shifts = flex.double(6, -100)
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    uc, scatterers, f, shifts).shifted_scatterers
+  assert not approx_equal(shifted_scatterers[1].u_star,
+    [u_ij-100 for u_ij in scatterers[1].u_star])
+  f = xray.ext.gradient_flags(False, False, False, True, False, False, False)
+  shifts = flex.double(2, -10)
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    uc, scatterers, f, shifts).shifted_scatterers
+  for i in xrange(2):
+    assert approx_equal(shifted_scatterers[i].occupancy, -9)
+  f = xray.ext.gradient_flags(False, False, False, False, True, False, False)
+  shifts = flex.double(2, -10)
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    uc, scatterers, f, shifts).shifted_scatterers
+  assert approx_equal(shifted_scatterers[0].fp, -11)
+  assert shifted_scatterers[1].fp == -10
+  for i in xrange(2):
+    assert shifted_scatterers[i].fdp == scatterers[i].fdp
+  f = xray.ext.gradient_flags(False, False, False, False, False, True, False)
+  shifts = flex.double((2,3))
+  shifted_scatterers = xray.ext.minimization_apply_shifts(
+    uc, scatterers, f, shifts).shifted_scatterers
+  assert shifted_scatterers[0].fp == -1
+  assert approx_equal(shifted_scatterers[0].fdp, 4)
+  assert shifted_scatterers[1].fp == 0
+  assert shifted_scatterers[1].fdp == 3
+  shifts = flex.double(1)
+  try:
+    xray.ext.minimization_apply_shifts(uc, scatterers, f, shifts)
+  except Exception, e:
+    assert str(e) == "scitbx Error: Array of shifts is too small."
+  else:
+    raise RuntimeError("Exception expected.")
+  shifts = flex.double(3)
+  try:
+    xray.ext.minimization_apply_shifts(uc, scatterers, f, shifts)
+  except Exception, e:
+    assert str(e) == "cctbx Error: Array of shifts is too large."
+  else:
+    raise RuntimeError("Exception expected.")
+
+def exercise_minimization_add_gradients():
+  uc = uctbx.unit_cell((20, 20, 23))
+  scatterers = flex.xray_scatterer((
+    xray.scatterer("Si1", site=(0.01,0.02,0.3), fp=-1, fdp=2),
+    xray.scatterer("O1", site=(0.3,0.4,0.5),
+                   u=adptbx.u_cart_as_u_star(uc,
+                     (0.04,0.05,0.06,-.005,0.02,-0.002)))))
+  gradient_flags = xray.ext.gradient_flags(
+    True, False, False, False, False, False, False)
+  xray_gradients = flex.double(xrange(6))
+  geometry_restraints_site_gradients = flex.vec3_double([(1,-2,3),(-4,-5,6)])
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=geometry_restraints_site_gradients,
+    u_iso_gradients=None,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients,
+    [1,-1,5,-1,-1,11])
+  gradient_flags = xray.ext.gradient_flags(
+    True, True, True, True, True, True, False)
+  xray_gradients = flex.double(xrange(19))
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=geometry_restraints_site_gradients,
+    u_iso_gradients=None,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients,
+    [1,-1,5,3,4,5,6,3,3,15,10,11,12,13,14,15,16,17,18])
+  gradient_flags = xray.ext.gradient_flags(
+    True, True, False, True, True, True, False)
+  xray_gradients = flex.double(xrange(13))
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=geometry_restraints_site_gradients,
+    u_iso_gradients=None,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients,
+    [1,-1,5,3,4,5,6,3,3,15,10,11,12])
+  gradient_flags = xray.ext.gradient_flags(
+    True, False, True, True, False, True, False)
+  xray_gradients = flex.double(xrange(16))
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=geometry_restraints_site_gradients,
+    u_iso_gradients=None,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients,
+    [1,-1,5,3,4,1,1,13,8,9,10,11,12,13,14,15])
+  site_gradients = xray.ext.minimization_extract_site_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients)
+  assert approx_equal(site_gradients, [(1,-1,5), (1,1,13)])
+  #
+  gradient_flags = xray.ext.gradient_flags(
+    False, True, False, False, False, False, False)
+  xray_gradients = flex.double([1])
+  u_iso_gradients = flex.double([3,0])
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=None,
+    u_iso_gradients=u_iso_gradients,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients, [4])
+  gradient_flags = xray.ext.gradient_flags(
+    True, True, True, True, True, True, False)
+  xray_gradients = flex.double(xrange(19))
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=None,
+    u_iso_gradients=u_iso_gradients,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients,
+    [0,1,2,6,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18])
+  gradient_flags = xray.ext.gradient_flags(
+    True, True, False, True, True, True, False)
+  xray_gradients = flex.double(xrange(13))
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=None,
+    u_iso_gradients=u_iso_gradients,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients,
+    [0,1,2,6,4,5,6,7,8,9,10,11,12])
+  gradient_flags = xray.ext.gradient_flags(
+    False, True, True, True, False, True, False)
+  xray_gradients = flex.double(xrange(11))
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=None,
+    u_iso_gradients=u_iso_gradients,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients,
+    [3,1,2,3,4,5,6,7,8,9,10])
+  #
+  gradient_flags = xray.ext.gradient_flags(
+    False, False, False, True, False, False, False)
+  xray_gradients = flex.double([1,2])
+  occupancy_gradients = flex.double([3,4])
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=None,
+    u_iso_gradients=None,
+    occupancy_gradients=occupancy_gradients)
+  assert approx_equal(xray_gradients, [4,6])
+  xray_gradients = flex.double([2,1])
+  xray.ext.minimization_add_gradients(
+    scatterers=scatterers,
+    gradient_flags=gradient_flags,
+    xray_gradients=xray_gradients,
+    site_gradients=None,
+    u_iso_gradients=None,
+    occupancy_gradients=None)
+  assert approx_equal(xray_gradients, [2,1])
+
+def exercise_asu_mappings():
+  from cctbx.development import random_structure
+  structure = random_structure.xray_structure(
+    space_group_info=sgtbx.space_group_info("P 31"),
+    elements=["O"]*10)
+  asu_mappings = crystal.direct_space_asu.asu_mappings(
+    space_group=structure.space_group(),
+    asu=structure.direct_space_asu().as_float_asu(),
+    buffer_thickness=3)
+  xray.asu_mappings_process(
+    asu_mappings=asu_mappings,
+    scatterers=structure.scatterers(),
+    site_symmetry_table=structure.site_symmetry_table())
+  assert asu_mappings.mappings().size() == structure.scatterers().size()
+
+def exercise_ls_target_with_scale_k1():
+  f_obs = flex.double((1,2,3,4,5))
+  w = flex.double((1,1,1,1,1))
+  f_calc = flex.complex_double((1,2,3,4,5))
+  #
+  ls = xray.ls_target_with_scale_k1(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = False,
+                                    fix_scale           = False)
+  assert approx_equal(ls.scale(), 1)
+  assert approx_equal(ls.target(), 0)
+  assert ls.derivatives().size() == 0
+  #
+  ls = xray.ls_target_with_scale_k1(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = False,
+                                    fix_scale           = True,
+                                    scale               = 2.0)
+  assert approx_equal(ls.scale(), 2.0)
+  assert approx_equal(ls.target(),1.0)
+  assert ls.derivatives().size() == 0
+  #
+  f_obs = flex.double((1,2,3))
+  w = flex.double((3,2,1))
+  f_calc = flex.complex_double((4,5,6))
+  #
+  ls = xray.ls_target_with_scale_k1(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = True,
+                                    fix_scale           = False)
+  assert approx_equal(ls.scale(), 50./134.)
+  assert approx_equal(ls.target(), 0.0671641791)
+  assert approx_equal( tuple(ls.derivatives()),
+                     ((0.0551347738+0j),(-0.0100245043+0j),(-0.0284027623+0j)) )
+  #
+  ls = xray.ls_target_with_scale_k1(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = True,
+                                    fix_scale           = True,
+                                    scale               = 2.0)
+  assert approx_equal(ls.scale(), 2.0)
+  assert approx_equal(ls.target(),17.8)
+  assert approx_equal( tuple(ls.derivatives()), ((4.2+0j),(3.2+0j),(1.8+0j)) )
+  #
+  f_obs = flex.double((1,2,3))
+  w = flex.double((3,2,1))
+  f_calc = flex.complex_double((1+2j,3+4j,-1-2j))
+  #
+  ls = xray.ls_target_with_scale_k1(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = True,
+                                    fix_scale           = False)
+  assert approx_equal(ls.scale(), 0.4773772552)
+  assert approx_equal(ls.target(), 0.2023883467)
+  assert approx_equal( tuple(ls.derivatives()),
+                       ((0.0043198335244903152-0.0086396670489806305j),
+                        (0.022162885026120613-0.029550513368160818j),
+                        (0.041257975234691303-0.082515950469382607j)) )
+
+def exercise_ls_target_with_scale_k2():
+  f_obs = flex.double((1,2,3,4,5))
+  w = flex.double((1,1,1,1,1))
+  f_calc = flex.complex_double((1,2,3,4,5))
+  #
+  ls = xray.ls_target_with_scale_k1(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = False,
+                                    fix_scale           = False)
+  assert approx_equal(ls.scale(), 1)
+  assert approx_equal(ls.target(), 0)
+  assert ls.derivatives().size() == 0
+  #
+  ls = xray.ls_target_with_scale_k1(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = False,
+                                    fix_scale           = True,
+                                    scale               = 2.0)
+  assert approx_equal(ls.scale(), 2.0)
+  assert approx_equal(ls.target(),1.0)
+  assert ls.derivatives().size() == 0
+  #
+  f_obs = flex.double((1,2,3))
+  w = flex.double((3,2,1))
+  f_calc = flex.complex_double((4,5,6))
+  #
+  ls = xray.ls_target_with_scale_k2(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = True,
+                                    fix_scale           = False)
+  assert approx_equal(ls.scale(), 50./20.)
+  assert approx_equal(ls.target(), 0.45)
+  assert approx_equal( tuple(ls.derivatives()),
+                     ((0.45000000000000001+0j), 0j, (-0.15000000000000002+0j)) )
+  #
+  ls = xray.ls_target_with_scale_k2(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = True,
+                                    fix_scale           = True,
+                                    scale               = 2.0)
+  assert approx_equal(ls.scale(), 2.0)
+  assert approx_equal(ls.target(),0.7)
+  assert approx_equal( tuple(ls.derivatives()), ((0.6+0j),(0.2+0j),(0.0+0j)) )
+  #
+  f_obs = flex.double((1,2,3))
+  w = flex.double((3,2,1))
+  f_calc = flex.complex_double((1+2j,3+4j,-1-2j))
+  #
+  ls = xray.ls_target_with_scale_k2(f_obs               = f_obs,
+                                    weights             = w,
+                                    f_calc              = f_calc,
+                                    compute_derivatives = True,
+                                    fix_scale           = False)
+  scale = flex.sum(w*flex.abs(f_calc)*f_obs)/flex.sum(w*f_obs*f_obs)
+  assert approx_equal(ls.scale(), 1.6708203932)
+  assert approx_equal(ls.target(), 0.7083592135)
+  assert approx_equal( tuple(ls.derivatives()),
+                       ((0.075835921350012631-0.15167184270002526j),
+                        (0.19900310562001516-0.26533747416002024j),
+                        (0.12416407864998737-0.24832815729997473j)) )
+
+def run():
+  exercise_conversions()
+  exercise_gradient_flags()
+  exercise_xray_scatterer()
+  exercise_scattering_dictionary()
+  exercise_rotate()
+  exercise_structure_factors()
+  exercise_targets()
+  exercise_sampled_model_density()
+  exercise_minimization_apply_shifts()
+  exercise_minimization_add_gradients()
+  exercise_asu_mappings()
+  exercise_ls_target_with_scale_k1()
+  exercise_ls_target_with_scale_k2()
+  print "OK"
+
+if (__name__ == "__main__"):
+  run()

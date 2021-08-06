@@ -1,0 +1,65 @@
+# Non-terminal symbols of Python grammar (from "graminit.h")
+
+single_input = 256
+file_input = 257
+eval_input = 258
+funcdef = 259
+parameters = 260
+varargslist = 261
+fpdef = 262
+fplist = 263
+stmt = 264
+simple_stmt = 265
+small_stmt = 266
+expr_stmt = 267
+print_stmt = 268
+del_stmt = 269
+pass_stmt = 270
+flow_stmt = 271
+break_stmt = 272
+continue_stmt = 273
+return_stmt = 274
+raise_stmt = 275
+import_stmt = 276
+dotted_name = 277
+global_stmt = 278
+access_stmt = 279
+accesstype = 280
+exec_stmt = 281
+compound_stmt = 282
+if_stmt = 283
+while_stmt = 284
+for_stmt = 285
+try_stmt = 286
+except_clause = 287
+suite = 288
+test = 289
+and_test = 290
+not_test = 291
+comparison = 292
+comp_op = 293
+expr = 294
+xor_expr = 295
+and_expr = 296
+shift_expr = 297
+arith_expr = 298
+term = 299
+factor = 300
+power = 301
+atom = 302
+lambdef = 303
+trailer = 304
+subscript = 305
+exprlist = 306
+testlist = 307
+dictmaker = 308
+classdef = 309
+arglist = 310
+argument = 311
+
+names = dir()
+sym_name = {}
+for name in names:
+    number = eval(name)
+    if type(number) is type(0):
+	sym_name[number] = name

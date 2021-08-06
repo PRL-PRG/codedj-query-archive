@@ -1,0 +1,381 @@
+"""
+Transcendental Functions
+"""
+
+#*****************************************************************************
+#       Copyright (C) 2005 William Stein <wstein@gmail.com>
+#
+#  Distributed under the terms of the GNU General Public License (GPL)
+#
+#    This code is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#    General Public License for more details.
+#
+#  The full text of the GPL is available at:
+#
+#                  http://www.gnu.org/licenses/
+#*****************************************************************************
+
+import  sage.libs.pari.all
+from sage.libs.pari.all import pari, PariError
+import sage.rings.complex_field as complex_field
+import sage.rings.real_double as real_double
+import sage.rings.complex_number
+from sage.gsl.integration import numerical_integral
+
+from sage.rings.all import (is_RealNumber, RealField,
+                            is_ComplexNumber, ComplexField,
+                            ZZ, CDF, prime_range)
+
+import sage.plot.all
+
+def __prep_num(x):
+    if isinstance(x, sage.rings.complex_number.ComplexNumber):
+        x = str(x).replace("i","I")
+    else:
+        x = str(x)
+    return x
+
+CC = complex_field.ComplexField()
+I = CC.gen(0)
+def __eval(x):
+    return eval(x)
+
+def exponential_integral_1(x, n=0):
+    r"""
+    Returns the exponential integral $E_1(x)$. If the optional argument
+    $n$ is given, computes list of the first $n$ values of the exponential
+    integral $E_1(x m)$.
+
+    The exponential integral $E_1(x)$ is
+    $$
+             E_1(x) = \int_{x}^{\infty} e^{-t}/t dt
+    $$
+    
+    INPUT:
+        x -- a positive real number
+
+        n -- (default: 0) a nonnegative integer; if nonzero,
+             then return a list of values E_1(x*m) for
+             m = 1,2,3,...,n.   This is useful, e.g., when
+             computing derivatives of L-functions.
+
+    OUTPUT:
+        float -- if n is 0 (the default)
+      or
+        list -- list of floats if n > 0  
+
+    EXAMPLES:
+        sage: exponential_integral_1(2)
+        0.048900510708061118
+        sage: w = exponential_integral_1(2,4); w
+        [0.048900510708061118, 0.0037793524098489067, 0.00036008245216265867, 3.76656228439249e-05]
+
+
+    IMPLEMENTATION: We use the PARI C-library functions eint1 and
+    veceint1.  
+        
+    REFERENCE: See page 262, Prop 5.6.12, of Cohen's book "A Course
+    in Computational Algebraic Number Theory".
+
+    REMARKS: When called with the optional argument n, the PARI
+    C-library is fast for values of n up to some bound, then very
+    very slow.  For example, if x=5, then the computation takes less
+    than a second for n=800000, and takes "forever" for n=900000.
+    
+    """
+    if n <= 0:
+        return float(pari(x).eint1())
+    else:
+        return [float(z) for z in pari(x).eint1(n)]
+
+def gamma(s):
+    """
+    Gamma function at s.
+
+    EXAMPLES:
+        sage: gamma(CDF(0.5,14))
+        -4.05370307804e-10 - 5.77329983455e-10*I
+        sage: gamma(I)
+        -0.154949828301811 - 0.498015668118356*I
+        sage: gamma(6)
+        120
+    """
+    try:
+        return s.gamma()
+    except AttributeError:
+        return CC(s).gamma()
+
+def gamma_inc(s, t):
+    """
+    Incomplete Gamma function Gamma(s,t).
+
+    EXAMPLES:
+        sage: gamma_inc(CDF(0,1), 3)
+        0.00320857499337 + 0.0124061858119*I
+        sage: gamma_inc(3, 3)
+        0.846380162253687 + 2.52435489670724e-29*I      # 32-bit
+        0.846380162253687                               # 64-bit
+        sage: gamma_inc(RDF(1), 3)
+        0.0497870683678639
+    """
+    try:
+        return s.gamma_inc(t)
+    except AttributeError:
+        if not (is_ComplexNumber(s)):
+            if is_ComplexNumber(t):
+                C = t.parent()
+            else:
+                C = ComplexField()
+            s = C(s)
+        return s.gamma_inc(t)
+
+
+# synonym.
+incomplete_gamma = gamma_inc
+
+def zeta(s):
+    """
+    Riemann zeta function at s with s a real or complex number.
+
+    INPUT:
+        s -- real or complex number
+
+    If s is a real number the computation is done using the MPFR
+    library.  When the input is not real, the computation is done
+    using the PARI C library.
+    
+    EXAMPLES:
+        sage: zeta(2)
+        1.64493406684823
+        sage: RR = RealField(200)
+        sage: zeta(RR(2))
+        1.6449340668482264364724151666460251892189499012067984377356
+        sage: zeta(I)
+        0.00330022368532410 - 0.418155449141322*I
+    """
+    try:
+        return s.zeta()
+    except AttributeError:
+        return ComplexField()(s).zeta()
+
+def zeta_symmetric(s):
+    r"""
+    Completed function $\xi(s)$ that satisfies $\xi(s) = \xi(1-s)$ and
+    has zeros at the same points as the Riemann zeta function.
+
+    INPUT:
+        s -- real or complex number
+
+    If s is a real number the computation is done using the MPFR
+    library.  When the input is not real, the computation is done
+    using the PARI C library.
+    
+    More precisely,
+    $$
+       xi(s) = \gamma(s/2 + 1) * (s-1) * \pi^{-s/2} * \zeta(s).
+    $$
+    
+    EXAMPLES:
+        sage: zeta_symmetric(0.7)
+        0.497580414651127
+        sage: zeta_symmetric(1-0.7)
+        0.497580414651127
+        sage: RR = RealField(200)
+        sage: zeta_symmetric(RR('0.7'))
+        0.49758041465112690357779107525638385212657443284080589766062
+        sage: I = CC.0
+        sage: zeta_symmetric(RR('0.5') + I*RR('14.0'))
+        0.000201294444235258 + 4.74338450462408e-20*I
+        sage: zeta_symmetric(RR('0.5') + I*RR('14.1'))
+        0.0000489893483255687 + 1.18584612615602e-20*I
+        sage: zeta_symmetric(RR('0.5') + I*RR('14.2'))
+        -0.0000868931282620101 - 2.03287907341032e-20*I
+
+    REFERENCE:
+      I copied the definition of xi from
+        \url{http://www.math.ubc.ca/~pugh/RiemannZeta/RiemannZetaLong.html}
+    """
+    if not (is_ComplexNumber(s) or is_RealNumber(s)):
+        s = RealField()(s)
+        
+    if s == 1:  # deal with poles, hopefully
+        return s.parent()(1/2)
+    
+    R = s.parent()
+    return (s/2 + 1).gamma()   *    (s-1)   * (R.pi()**(-s/2))  *  s.zeta()
+    
+
+##     # Use PARI on complex nubmer
+##     prec = s.prec()
+##     s = pari.new_with_bits_prec(s, prec)
+##     pi = pari.pi()
+##     w = (s/2 + 1).gamma() * (s-1) * pi **(-s/2) * s.zeta()
+##     z = w._sage_()
+##     if z.prec() < prec:
+##         raise RuntimeError, "Error computing zeta_symmetric(%s) -- precision loss."%s
+##     return z
+
+
+#def pi_approx(prec=53):
+#    """
+#    Return pi computed to prec bits of precision.
+#    """
+#   return real_field.RealField(prec).pi()
+
+
+def Ei(z):
+    """
+    Return the value of the complex exponential integral Ei(z)
+    at a complex number z.
+
+    WARNING: Calculations are done to double precision, and the output
+    is a complex double element, no matter how big the precision of
+    the input is.
+
+    EXAMPLES:
+        sage: Ei(10)
+        2492.22897624
+        sage: Ei(I)
+        0.337403922901 + 2.51687939716*I
+        sage: Ei(3+I)
+        7.823134676 + 6.09751978399*I
+
+    ALGORITHM: Uses scipy's special.exp1 function.
+    """
+    import scipy.special, math
+    return CDF(-scipy.special.exp1(-complex(z)) + complex(0,math.pi))    
+
+def Li(x, eps_rel=None, err_bound=False):
+    r"""
+    Return value of the function Li(x) as a real double field element.
+
+    This is the function
+    $$
+       \int_2^{x} dt / \log(t).
+    $$
+    
+    The function Li(x) is an approximation for the number
+    of primes up to $x$.  In fact, the famous Riemann
+    Hypothesis is equivalent to the statement that for
+    $x \geq 2.01$ we have
+    $$
+        |\pi(x) - Li(x)| \leq \sqrt{x} \log(x).
+    $$
+    For ``small'' $x$, $Li(x)$ is always slightly bigger than
+    $\pi(x)$.  However it is a theorem that there are (very large,
+    e.g., around $10^{316}$) values of $x$ so that $\pi(x) > Li(x)$.
+    See ``A new bound for the smallest x with $\pi(x) > li(x)$'',
+    Bays and Hudson, Mathematics of Computation, 69 (2000) 1285--1296.
+    
+    ALGORITHM: Computed numerically using GSL.
+
+    INPUT:
+        x -- a real number >= 2.
+
+    OUTPUT:
+        x -- a real double
+
+    EXAMPLES:
+        sage: Li(2)
+        0.0
+        sage: Li(5)
+        2.58942452992
+        sage: Li(1000)
+        176.56449421
+        sage: Li(10^5)
+        9628.76383727
+        sage: prime_pi(10^5)
+        9592
+        sage: Li(1)
+        Traceback (most recent call last):
+        ...
+        ValueError: Li only defined for x at least 2.    
+
+        sage: for n in range(1,7):
+        ...    print '%-10s%-10s%-20s'%(10^n, prime_pi(10^n), Li(10^n))
+        10        4         5.12043572467       
+        100       25        29.080977804        
+        1000      168       176.56449421        
+        10000     1229      1245.09205212       
+        100000    9592      9628.76383727       
+        1000000   78498     78626.5039957           
+    """
+    x = float(x)
+    if x < 2:
+        raise ValueError, "Li only defined for x at least 2."
+    if eps_rel:
+        ans = numerical_integral(_one_over_log, 2, float(x),
+                             eps_rel=eps_rel)
+    else:
+        ans = numerical_integral(_one_over_log, 2, float(x))
+    if err_bound:
+        return real_double.RDF(ans[0]), ans[1]
+    else:
+        return real_double.RDF(ans[0])
+    # Old PARI version -- much much slower
+    #x = RDF(x)
+    #return RDF(gp('intnum(t=2,%s,1/log(t))'%x))
+
+import math
+def _one_over_log(t):
+    return 1/math.log(t)
+
+class PrimePi:
+    """
+    Return the number of primes $\leq x$.
+
+    EXAMPLES:
+        sage: prime_pi(7)
+        4
+        sage: prime_pi(100)
+        25
+        sage: prime_pi(1000)
+        168
+        sage: prime_pi(100000)
+        9592
+        sage: prime_pi(0.5)
+        0
+        sage: prime_pi(-10)
+        0
+
+    The prime_pi function also has a special plotting method, so it plots
+    quickly and perfectly as a step function.
+        sage: P = plot(prime_pi, 50,100)
+    """
+    def __repr__(self):
+        return "Function that counts the number of primes up to x"
+        
+    def __call__(self, x):
+        if x < 2:
+            return ZZ(0)
+        try:
+            return ZZ(pari(x).primepi())
+        except PariError:
+            from sage.rings.integer import Integer
+            pari.init_primes(pari(x)+Integer(1))
+            return ZZ(pari(x).primepi())
+
+    def plot(self, xmin=0, xmax=100, *args, **kwds):
+        primes = prime_range(xmin, xmax+2)
+        base = self(xmin)
+        if xmin <= 2:
+            v = [(xmin,0),(min(xmax,2),0)]
+            ymin = 0
+        else:
+            v = []
+            ymin = base
+        for i in range(len(primes)-1):
+            v.extend([(primes[i],base+i+1), (primes[i+1],base+i+1)])
+        P = sage.plot.all.line(v, *args, **kwds)
+        P.xmin(xmin)
+        P.xmax(xmax)
+        P.ymin(ymin)
+        P.ymax(base+len(primes))
+        return P
+    
+#############
+prime_pi = PrimePi()
+
+
