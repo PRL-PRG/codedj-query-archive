@@ -1,4 +1,4 @@
-# {{project-name}}
+# style-analyzer-query
 
 A crate containing ![Djanco](https://github.com/PRL-PRG/djanco) queries.
 
@@ -33,7 +33,7 @@ cargo run --bin djanco --release -- --dataset-path DATASET_LIVES_HERE --output-p
 
 # Template
 
-The template file for the {{project-name}} crate comes from 
+The template file for the style-analyzer-query crate comes from 
 ![here](https://github.com/PRL-PRG/djanco-query-template). 
 
 To create a new crate from the template, first install 

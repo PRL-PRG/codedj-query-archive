@@ -1,7 +1,7 @@
 [package]
-name = "{{project-name}}"
+name = "style-analyzer-query"
 version = "0.1.0"
-authors = ["{{authors}}"]
+authors = ["Konrad Siek <konrad.siek@gmail.com>"]
 edition = "2018"
 license = "MIT"
 
@@ -11,3 +11,4 @@ license = "MIT"
 clap = "3.0.0-beta.2"
 djanco = { git = "https://github.com/PRL-PRG/djanco", branch = "main" }
 djanco_ext = { git = "https://github.com/PRL-PRG/djanco_ext" }
+itertools = "0.10.1"
