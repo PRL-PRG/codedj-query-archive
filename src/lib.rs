@@ -12,7 +12,7 @@ use djanco::objects::ItemWithData;
 use djanco::objects::Language;
 use djanco::objects::Project;
 use djanco::objects::ProjectId;
-use djanco::project::Substore;
+
 use djanco_ext::*;
 
 // use itertools;
@@ -36,7 +36,7 @@ const BASE_COMMIT_OFFSET_RATIO: usize = 10;
 #[djanco(May, 2021, subsets(JavaScript))]
 pub fn all_projects(database: &Database, _log: &Log, output: &Path) -> Result<(), std::io::Error>  {
     database.projects()
-        .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
+        //.filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
         .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
         .into_csv_in_dir(output, "javascript_projects.csv")
 }
@@ -56,8 +56,9 @@ pub fn random_projects(database: &Database, _log: &Log, output: &Path, seed_inde
     database.projects()
         .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
         .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
-        .sample(Random(SELECTED_PROJECTS, Seed(SEEDS[seed_index])))        
-        .map(project_spec)
+        .filter(is_project_spec)
+        .sample(Random(SELECTED_PROJECTS, Seed(SEEDS[seed_index])))
+        .flat_map(project_spec)
         .into_csv_with_headers_in_dir(vec!["url", "to", "from"], output, format!("random_projects_{}_{}.csv", seed_index, BASE_COMMIT_OFFSET_RATIO))
 }
 
@@ -67,8 +68,8 @@ pub fn top_starred(database: &Database, _log: &Log, output: &Path) -> Result<(),
         .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
         .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
         .sort_by(project::Stars)
-        .sample(Top(SELECTED_PROJECTS))
-        .map(project_spec)
+        .filter(is_project_spec)
+        .flat_map(project_spec)      
         .into_csv_with_headers_in_dir(vec!["url", "to", "from"], output, "top_starred_projects.csv")
 }
 
@@ -113,7 +114,7 @@ pub fn debug_commits(database: &Database, _log: &Log, output: &Path) -> Result<(
 //#[djanco(May, 2021, subsets(JavaScript))]
 pub fn debug_commits_from_source(database: &Database, _log: &Log, output: &Path) -> Result<(), std::io::Error>  {
     let mut hashes: Vec<(djanco::objects::CommitId, String)> = database.source().commit_hashes().collect();
-    hashes.sort_by_key(|(id, hash)| *id);
+    hashes.sort_by_key(|(id, _hash)| *id);
     hashes.into_iter().into_csv_in_dir(output, "commits_from_source.csv")
 }
 
@@ -149,7 +150,13 @@ pub fn debug_heads_from_source(database: &Database, _log: &Log, output: &Path) -
 type ProjectURL = String;
 type CommitHash = String;
 
+fn is_project_spec<'a>(project: &ItemWithData<'a, Project>) -> bool {
+    _project_spec(project).is_some()
+}
 fn project_spec<'a>(project: ItemWithData<'a, Project>) -> Option<(ProjectURL, CommitHash, CommitHash)> {
+    _project_spec(&project)
+}
+fn _project_spec<'a>(project: &ItemWithData<'a, Project>) -> Option<(ProjectURL, CommitHash, CommitHash)> {
     let url = project.url();
     
     let default_branch = project.default_branch();
@@ -212,7 +219,14 @@ fn project_spec<'a>(project: ItemWithData<'a, Project>) -> Option<(ProjectURL, C
     eprintln!("INFO: Base commit offset is {} (of {}) for project {} ({:?})", 
               base_commit_offset, total_commits, project.id(), url);
 
-    let base_commit = commits.iter().take(base_commit_offset).last().unwrap();
+    let base_commit = commits.iter().take(base_commit_offset).last();
+    if base_commit.is_none() {
+        eprintln!("WARNING: Base commit unavaiable for for branch {} in project {} ({:?}), skipping.", 
+                  default_branch, project.id(), url);
+        return None;
+    }
+    let base_commit = base_commit.unwrap();
+
 
     let base_commit_hash = base_commit.hash();
     if base_commit_hash.is_none() {
