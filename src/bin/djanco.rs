@@ -35,6 +35,7 @@ pub fn main() {
 
     let database = prepare_database!(1619827200 /* = May 2021*/, stores!(JavaScript));
     execute_query!(database, style_analyzer_query::all_projects);
+    execute_query!(database, style_analyzer_query::project_locs);
     execute_query!(database, style_analyzer_query::random_projects_0);
     execute_query!(database, style_analyzer_query::random_projects_1);
     execute_query!(database, style_analyzer_query::random_projects_2);

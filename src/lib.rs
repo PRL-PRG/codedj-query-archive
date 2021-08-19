@@ -17,7 +17,7 @@ use djanco_ext::*;
 
 // use itertools;
 
-const SELECTED_PROJECTS: usize = 19;
+const SELECTED_PROJECTS: usize = 20;
 const SEEDS: [u128; 10] = [1,2,3,5,7,11,13,17,19,23];
 
 // Base commit is going to be a commit this many percent commits in the past.
@@ -36,9 +36,18 @@ const BASE_COMMIT_OFFSET_RATIO: usize = 10;
 #[djanco(May, 2021, subsets(JavaScript))]
 pub fn all_projects(database: &Database, _log: &Log, output: &Path) -> Result<(), std::io::Error>  {
     database.projects()
-        //.filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
+        .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
         .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
         .into_csv_in_dir(output, "javascript_projects.csv")
+}
+
+#[djanco(May, 2021, subsets(JavaScript))]
+pub fn project_locs(database: &Database, _log: &Log, output: &Path) -> Result<(), std::io::Error>  {
+    database.projects()
+    .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
+    .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
+    .map_into(Select!(project::URL, project::Locs))
+    .into_csv_in_dir(output, "project_locs.csv")
 }
 
 #[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_0(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects(database, log, output, 0) }
