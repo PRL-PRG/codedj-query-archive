@@ -82,6 +82,15 @@ pub fn random_projects(database: &Database, _log: &Log, output: &Path, seed_inde
 #[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_8(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 8) }
 #[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_9(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 9) }
 
+#[djanco(May, 2021, subsets(JavaScript))] 
+pub fn all_specs(database: &Database, _log: &Log, output: &Path) -> Result<(), std::io::Error> {
+    database.projects()
+        .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
+        .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
+        .flat_map(project_spec)
+        .into_csv_with_headers_in_dir(vec!["url", "to", "from"], output, format!("all_project_specs_{}.csv", BASE_COMMIT_OFFSET_RATIO))
+}
+
 pub fn random_projects_by_size(database: &Database, _log: &Log, output: &Path, seed_index: usize) -> Result<(), std::io::Error>  {
     database.projects()
         .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))

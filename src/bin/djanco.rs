@@ -56,6 +56,7 @@ pub fn main() {
     execute_query!(database, style_analyzer_query::random_projects_by_size_7);
     execute_query!(database, style_analyzer_query::random_projects_by_size_8);
     execute_query!(database, style_analyzer_query::random_projects_by_size_9);
+    execute_query!(database, style_analyzer_query::all_specs);
     execute_query!(database, style_analyzer_query::top_starred);
 
 
