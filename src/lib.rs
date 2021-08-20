@@ -47,7 +47,7 @@ pub fn project_locs(database: &Database, _log: &Log, output: &Path) -> Result<()
     .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
     .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
     .map_into(Select!(project::URL, project::Locs))
-    .into_csv_in_dir(output, "project_locs.csv")
+    .into_csv_with_headers_in_dir(vec!["url", "locs"], output, "project_locs.csv")
 }
 
 #[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_0(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects(database, log, output, 0) }
@@ -69,6 +69,35 @@ pub fn random_projects(database: &Database, _log: &Log, output: &Path, seed_inde
         .sample(Random(SELECTED_PROJECTS, Seed(SEEDS[seed_index])))
         .flat_map(project_spec)
         .into_csv_with_headers_in_dir(vec!["url", "to", "from"], output, format!("random_projects_{}_{}.csv", seed_index, BASE_COMMIT_OFFSET_RATIO))
+}
+
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_0(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 0) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_1(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 1) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_2(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 2) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_3(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 3) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_4(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 4) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_5(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 5) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_6(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 6) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_7(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 7) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_8(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 8) }
+#[djanco(May, 2021, subsets(JavaScript))] pub fn random_projects_by_size_9(database: &Database, log: &Log, output: &Path) -> Result<(), std::io::Error>  { random_projects_by_size(database, log, output, 9) }
+
+pub fn random_projects_by_size(database: &Database, _log: &Log, output: &Path, seed_index: usize) -> Result<(), std::io::Error>  {
+    database.projects()
+        .filter_by(Equal(project::Substore, Store::Large(store::Language::JavaScript)))
+        .filter_by(AnyIn(project::Languages, vec![Language::JavaScript]))
+        .filter(is_project_spec)
+        .sample(Stratified(project::Locs, 
+                                  Strata!("very large" -> Random(SELECTED_PROJECTS/4, Seed(SEEDS[seed_index])), 
+                                          "large" -> Random(SELECTED_PROJECTS/4, Seed(SEEDS[seed_index])), 
+                                          "medium" -> Random(SELECTED_PROJECTS/4, Seed(SEEDS[seed_index])),
+                                          "small" -> Random(SELECTED_PROJECTS/4, Seed(SEEDS[seed_index]))),
+                                  Thresholds::Inclusive(Conditions!("very large" -> 100_000,
+                                                                    "large" -> 10_000,
+                                                                    "medium" -> 1000),
+                                                                    "small")))
+        .flat_map(project_spec)
+        .into_csv_with_headers_in_dir(vec!["url", "to", "from"], output, format!("random_projects_by_size_{}_{}.csv", seed_index, BASE_COMMIT_OFFSET_RATIO))
 }
 
 #[djanco(May, 2021, subsets(JavaScript))]

@@ -46,6 +46,16 @@ pub fn main() {
     execute_query!(database, style_analyzer_query::random_projects_7);
     execute_query!(database, style_analyzer_query::random_projects_8);
     execute_query!(database, style_analyzer_query::random_projects_9);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_0);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_1);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_2);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_3);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_4);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_5);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_6);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_7);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_8);
+    execute_query!(database, style_analyzer_query::random_projects_by_size_9);
     execute_query!(database, style_analyzer_query::top_starred);
 
 

@@ -1,4 +1,4 @@
-string,n
+url, locs
 "https://github.com/geonode/geonode.git",548177
 "https://github.com/parallels/rq-dashboard.git",9375
 "https://github.com/tygs/0bin.git",31744
