@@ -2,7 +2,7 @@
 
 A crate containing ![Djanco](https://github.com/PRL-PRG/djanco) queries.
 
-This crate... *TODO*
+This crate samples and retrieves url, head commit, and base commit for a reproduction of an MSR2019 paper on Styla Analyzer.
 
 ## Djanco
 
